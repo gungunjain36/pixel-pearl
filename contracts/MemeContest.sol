@@ -4,10 +4,10 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/Counters.sol";
+// import "@openzeppelin/contracts/utils/Counters.sol";
 
 contract MemeContest is Ownable {
-    using Counters for Counters.Counter;
+    // using Counters for Counters.Counter;
 
     IERC20 public PearlToken;
 
@@ -20,8 +20,7 @@ contract MemeContest is Ownable {
         uint256 submissionTime;
         bool exists;
     }
-
-    Counters.Counter private _memeIds;
+    uint256 private _memeIds; // Start from 0
     mapping(uint256 => Meme) public memes;
     mapping(address => mapping(uint256 => bool)) public hasVoted;
 
@@ -60,12 +59,12 @@ contract MemeContest is Ownable {
     function submitMeme(string memory _ipfsHash, string memory _storyProtocolIPID) public {
         require(block.timestamp < contestEndTime, "Contest has ended.");
         require(bytes(_ipfsHash).length > 0, "IPFS hash cannot be empty.");
-        require(bytes(_storyProtocolIPId).length > 0, "Story Protocol IP ID cannot be empty.");
+        require(bytes(_storyProtocolIPID).length > 0, "Story Protocol IP ID cannot be empty.");
 
         require(PearlToken.transferFrom(msg.sender, address(this), submissionFee), "Submission fee transfer failed.Check allowance for submission fee.");
 
        
-        uint256 memeId = _memeIds.current();
+        uint256 memeId = _memeIds;
 
         memes[memeId] = Meme({
             id: memeId,
@@ -76,7 +75,7 @@ contract MemeContest is Ownable {
             submissionTime: block.timestamp,
             exists: true
         });
-        _memeIds.increment();
+        _memeIds++;
 
         emit MemeSubmitted(memeId, msg.sender, _ipfsHash, _storyProtocolIPID);
     }
