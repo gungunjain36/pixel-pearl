@@ -10,8 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@story-protocol/core-sdk": "^1.3.2",
     "@tailwindcss/vite": "^4.1.10",
     "@zoralabs/coins-sdk": "^0.2.1",
+    "@zoralabs/protocol-sdk": "^0.13.8",
+    "ipfs-http-client": "^60.0.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tailwindcss": "^4.1.10",
