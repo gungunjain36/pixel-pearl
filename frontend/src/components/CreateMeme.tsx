@@ -6,7 +6,7 @@
     import { registerIP } from '../services/storyProtocol';
     import { mintMemeNFT } from '../services/zora';
     import { CONTRACT_ADDRESSES } from '../utils/zora-config';
-    import UrashimaTaroMemeContestABI from '../abi/UrashimaTaroMemeContest.json';
+    import MemeContestABI from '../abiMemeContest.json';
     import PearlTokenABI from '../abi/PearlToken.json';
     import { Address } from 'viem';
 
