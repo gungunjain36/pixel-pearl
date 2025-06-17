@@ -3,11 +3,8 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 contract PearlExchange is Ownable {
-    using SafeMath for uint256;
-
     IERC20 public pearlToken;
 
     // Exchange rate: How many Pearl tokens per 1 ETH
@@ -32,7 +29,7 @@ contract PearlExchange is Ownable {
     // Exchange ETH for Pearl tokens
     function exchangeEthForPearl() public payable {
         require(msg.value > 0, "Must send ETH to exchange.");
-        uint256 pearlAmount = msg.value.mul(pearlPerEthRate).div(1 ether); // Convert ETH (wei) to Pearl amount
+        uint256 pearlAmount = (msg.value * pearlPerEthRate) / 1 ether; // Convert ETH (wei) to Pearl amount
 
         require(pearlToken.balanceOf(address(this)) >= pearlAmount, "Not enough Pearl tokens in contract for exchange.");
         require(pearlToken.transfer(msg.sender, pearlAmount), "Failed to transfer Pearl tokens.");
@@ -44,7 +41,7 @@ contract PearlExchange is Ownable {
     function exchangePearlForEth(uint256 _pearlAmount) public {
         require(_pearlAmount > 0, "Must send Pearl tokens to exchange.");
 
-        uint256 ethAmount = _pearlAmount.mul(1 ether).div(pearlPerEthRate); // Convert Pearl to ETH (wei)
+        uint256 ethAmount = (_pearlAmount * 1 ether) / pearlPerEthRate; // Convert Pearl to ETH (wei)
 
         require(address(this).balance >= ethAmount, "Not enough ETH in contract for exchange.");
         require(pearlToken.transferFrom(msg.sender, address(this), _pearlAmount), "Pearl token transfer failed. Check allowance.");

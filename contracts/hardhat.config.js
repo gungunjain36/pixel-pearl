@@ -1,6 +1,5 @@
     // hardhat.config.js
-    require("@nomicfoundation/hardhat-toolbox");
-    require("@openzeppelin/hardhat-upgrades");
+    require("@nomicfoundation/hardhat-ethers");
     require('dotenv').config({ path: '../.env' }); // Adjusted path to root .env
 
     module.exports = {
@@ -15,27 +14,13 @@
       },
       networks: {
         zoraSepolia: {
-          url: process.env.ZORA_SEPOLIA_RPC_URL || "",
+          url: process.env.ZORA_SEPOLIA_RPC_URL || "https://sepolia.rpc.zora.energy",
           accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
+          chainId: 999999999, // FIXED: Correct Zora Sepolia Chain ID
         },
         localhost: {
           url: "http://127.0.0.1:8545"
         }
-      },
-      etherscan: {
-        apiKey: {
-            zoraSepolia: process.env.ZORA_EXPLORER_API_KEY || "", // Optional
-        },
-        customChains: [
-            {
-                network: "zoraSepolia",
-                chainId: 99999, // Zora Sepolia Chain ID (verify if changed)
-                urls: {
-                    api: "https://explorer.sepolia.zora.energy/api",
-                    browser: "https://sepolia.explorer.zora.energy/",
-                },
-            },
-        ],
       },
     };
     
