@@ -1,271 +1,902 @@
-    // frontend/src/components/CreateMeme.tsx
-    import React, { useState } from 'react';
-    import { useAccount, useWalletClient, usePrepareContractWrite, useContractWrite, useWaitForTransaction } from 'wagmi';
-    import { parseUnits } from 'ethers';
-    import { uploadToIpfs } from '../services/ipfs';
-    import { registerIP } from '../services/storyProtocol';
-    import { mintMemeNFT } from '../services/zora';
-    import { CONTRACT_ADDRESSES } from '../utils/zora-config';
-    import MemeContestABI from '../abiMemeContest.json';
-    import PearlTokenABI from '../abi/PearlToken.json';
-    import { Address } from 'viem';
+import { useState } from 'react';
+import { useAccount, useConnect, useDisconnect, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { ethers } from 'ethers';
+import axios from 'axios';
+import MemeContestABI from '../abi/MemeContest.json';
+import { Link } from 'react-router-dom';
 
-    const CreateMeme: React.FC = () => {
-      const { address, isConnected } = useAccount();
-      const { data: walletClient } = useWalletClient();
-      const [file, setFile] = useState<File | null>(null);
-      const [memeName, setMemeName] = useState('');
-      const [memeDescription, setMemeDescription] = useState('');
-      const [ipfsHash, setIpfsHash] = useState<string | null>(null);
-      const [storyProtocolIPId, setStoryProtocolIPId] = useState<string | null>(null);
+const MEME_CONTEST_ADDRESS = import.meta.env.MEME_CONTEST_ADDRESS;
+const PINATA_API_KEY = import.meta.env.VITE_PINATA_API_KEY;
+const PINATA_SECRET_KEY = import.meta.env.VITE_PINATA_SECRET_KEY;
 
-      const [status, setStatus] = useState('');
+// Zora Sepolia network parameters
+const ZORA_SEPOLIA_PARAMS = {
+  chainId: '0x' + Number(999999999).toString(16), // Zora Sepolia chainId in hex
+  chainName: 'Zora Sepolia Testnet',
+  nativeCurrency: {
+    name: 'ETH',
+    symbol: 'ETH',
+    decimals: 18
+  },
+  rpcUrls: ['https://sepolia.rpc.zora.energy'],
+  blockExplorerUrls: ['https://sepolia.explorer.zora.energy']
+};
 
-      // State for Contest Submission Flow
-      const [submissionApproved, setSubmissionApproved] = useState(false);
+interface MemeResponse {
+  meme: {
+    title: string;
+    description: string;
+    creator: string;
+    imageUrl: string;
+    metadata: {
+      tags: string[];
+      category: string;
+      aiGenerated: boolean;
+    };
+    registration: unknown;
+    file: {
+      id: string;
+      url: string;
+    };
+  };
+  variations?: string[];
+  enhancedPrompt?: string;
+}
 
-      // 1. Prepare to approve Pearl Token for submission fee
-      const submissionFeeAmount = parseUnits("10", 18); // Example: 10 PEARL fee
-      const { config: approveSubmissionConfig } = usePrepareContractWrite({
-        address: CONTRACT_ADDRESSES.pearlToken as `0x${string}`,
-        abi: PearlTokenABI.abi,
-        functionName: 'approve',
-        args: [CONTRACT_ADDRESSES.memeContest, submissionFeeAmount],
-        enabled: isConnected && ipfsHash !== null && storyProtocolIPId !== null && !submissionApproved,
-      });
-      const { data: approveSubmissionData, write: approveSubmissionPearl } = useContractWrite(approveSubmissionConfig);
-      const { isLoading: isApprovingSubmission, isSuccess: isSubmissionApprovedSuccess } = useWaitForTransaction({
-        hash: approveSubmissionData?.hash,
-      });
+interface AIGenerationResult {
+  imageUrl: string;
+  variations: string[];
+  metadata: {
+    style: string;
+    prompt: string;
+    enhancedPrompt: string;
+  };
+}
 
-      React.useEffect(() => {
-        if (isSubmissionApprovedSuccess) {
-            setSubmissionApproved(true);
-            setStatus("Pearl tokens approved for contest submission. Submitting meme to contest...");
-            // Automatically trigger submitMeme once approval is successful
-            submitMemeToContest?.();
-        }
-      }, [isSubmissionApprovedSuccess]);
+interface MemeStyle {
+  name: string;
+  description: string;
+  icon: string;
+}
 
+const MEME_STYLES: MemeStyle[] = [
+  {
+    name: "Classic Meme",
+    description: "Traditional viral-worthy memes that are relatable and funny",
+    icon: "🎭"
+  },
+  {
+    name: "Dank Meme",
+    description: "Surreal, absurdist humor with deep-fried aesthetics",
+    icon: "🌀"
+  },
+  {
+    name: "Wholesome",
+    description: "Heartwarming and positive memes that make people smile",
+    icon: "💖"
+  }
+];
 
-      // 2. Prepare to submit meme to contest
-      const { config: submitMemeContestConfig } = usePrepareContractWrite({
-        address: CONTRACT_ADDRESSES.memeContest as `0x${string}`,
-        abi: UrashimaTaroMemeContestABI.abi,
-        functionName: 'submitMeme',
-        args: [ipfsHash!, storyProtocolIPId!], // Use non-null assertion as enabled only if they exist
-        enabled: isConnected && submissionApproved && ipfsHash !== null && storyProtocolIPId !== null,
-      });
-      const { data: submitMemeData, write: submitMemeToContest } = useContractWrite(submitMemeContestConfig);
-      const { isLoading: isSubmittingMeme, isSuccess: isMemeSubmitted } = useWaitForTransaction({
-        hash: submitMemeData?.hash,
-      });
+const STATUS_MESSAGES = {
+  pending: { text: 'Registering with Story Protocol...', icon: 'pending' },
+  submitting: { text: 'Submitting meme...', icon: 'submitting' },
+  success: { text: 'Successfully registered!', icon: 'success' },
+  error: { text: 'Registration failed', icon: 'error' }
+} as const;
 
-      React.useEffect(() => {
-        if (isMemeSubmitted) {
-          setStatus("Meme successfully submitted to contest!");
-        }
-      }, [isMemeSubmitted]);
+type IpRegistrationStatus = keyof typeof STATUS_MESSAGES | null;
 
-      // State for NFT Minting Flow
-      const [nftMintTxHash, setNftMintTxHash] = useState<string | null>(null);
-      const [isMintingNft, setIsMintingNft] = useState(false);
+interface MemeMetadata {
+  aiGenerated: boolean;
+  prompt: string;
+  tags: string[];
+}
 
-      const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-          setFile(e.target.files[0]);
-        }
-      };
+interface TransactionLog {
+  fragment?: {
+    name: string;
+  };
+  args: {
+    memeId: bigint;
+  };
+}
 
-      const handleProcessMeme = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!isConnected || !walletClient || !address || !file || !memeName || !memeDescription) {
-          setStatus("Please connect wallet, fill all fields, and select a file.");
-          return;
-        }
+function CreateMeme() {
+  const { address, isConnected } = useAccount();
+  const { connect, connectors } = useConnect();
+  const { disconnect } = useDisconnect();
+  const { writeContract, data: hash, error: writeError, isPending: isWritePending } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash,
+  });
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [acceptRoyalty, setAcceptRoyalty] = useState(false);
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [uploadMethod, setUploadMethod] = useState<'manual' | 'ai'>('manual');
+  const [formData, setFormData] = useState({
+    title: '',
+    description: '',
+    socialLinks: '',
+    networkId: '999999999', // Default to Zora Sepolia
+    fileId: ''
+  });
+  const [submissionSuccess, setSubmissionSuccess] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [selectedStyle, setSelectedStyle] = useState<'Classic Meme' | 'Dank Meme' | 'Wholesome'>('Classic Meme');
+  const [variations, setVariations] = useState<string[]>([]);
+  const [selectedVariation, setSelectedVariation] = useState<number>(0);
+  const [generationHistory, setGenerationHistory] = useState<AIGenerationResult[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [enhancedPrompt, setEnhancedPrompt] = useState<string>('');
+  const [submissionLogs, setSubmissionLogs] = useState<string[]>([]);
 
-        setStatus("Uploading meme to IPFS...");
-        try {
-          const memeIpfsHash = await uploadToIpfs(file);
-          setIpfsHash(memeIpfsHash);
-          setStatus(`Meme IPFS Uploaded: ${memeIpfsHash}. Registering with Story Protocol...`);
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setImageFile(file);
+      setImagePreview(URL.createObjectURL(file));
+    }
+  };
 
-          // Register content with Story Protocol
-          const ipId = await registerIP(
-            walletClient,
-            memeName,
-            memeDescription,
-            memeIpfsHash,
-          );
-          setStoryProtocolIPId(ipId);
-          setStatus(`Story Protocol IP Registered: ${ipId}. Ready to submit to contest and mint NFT.`);
+  const handleRemoveImage = () => {
+    setImageFile(null);
+    setImagePreview(null);
+  };
 
-        } catch (error) {
-          console.error("Failed to process meme:", error);
-          setStatus(`Error processing meme: ${error instanceof Error ? error.message : String(error)}`);
-          setIpfsHash(null);
-          setStoryProtocolIPId(null);
-        }
-      };
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
 
-      // NEW: Handle Minting Meme as NFT
-      const handleMintMemeNFT = async () => {
-        if (!isConnected || !walletClient || !address || !ipfsHash || !memeName || !memeDescription) {
-          setNftMintStatus("Please process meme first (requires IPFS hash) and connect wallet.");
-          return;
-        }
-        if (!CONTRACT_ADDRESSES.zoraMemeNFTCollection || CONTRACT_ADDRESSES.zoraMemeNFTCollection === '0x0000000000000000000000000000000000000000') {
-            setNftMintStatus("Error: Zora Meme NFT Collection address is not configured. Please deploy it first.");
-            return;
-        }
+  const uploadToPinata = async (file: File): Promise<string> => {
+    console.log('Starting upload to Pinata...');
+    
+    const formData = new FormData();
+    formData.append('file', file);
 
-        setIsMintingNft(true);
-        setNftMintStatus("Preparing NFT metadata and minting...");
-        try {
-          // 1. Create NFT Metadata JSON (ERC721 standard)
-          const nftMetadata = {
-            name: memeName,
-            description: memeDescription + " - A collectible meme from Artifact.fun!",
-            image: ipfsHash, // Direct link to your meme image on IPFS
-            attributes: [
-              { trait_type: "Creator", value: address },
-              { trait_type: "Platform", value: "Artifact.fun" },
-              { trait_type: "Story Protocol IP ID", value: storyProtocolIPId || "N/A" },
-            ],
-          };
-
-          // 2. Upload NFT Metadata JSON to IPFS
-          const metadataBlob = new Blob([JSON.stringify(nftMetadata)], { type: 'application/json' });
-          const metadataFile = new File([metadataBlob], 'metadata.json', { type: 'application/json' });
-          const metadataIpfsUri = await uploadToIpfs(metadataFile);
-
-          // 3. Mint the NFT using Zora SDK
-          const { txHash: mintTxHash } = await mintMemeNFT(
-            walletClient,
-            CONTRACT_ADDRESSES.zoraMemeNFTCollection as Address,
-            metadataIpfsUri,
-            1n // Mint 1 NFT for this meme
-          );
-
-          setNftMintTxHash(mintTxHash);
-          setNftMintStatus(`Meme NFT successfully minted! Tx Hash: ${mintTxHash}`);
-
-        } catch (error) {
-          console.error("Failed to mint Meme NFT:", error);
-          setNftMintStatus(`Error minting NFT: ${error instanceof Error ? error.message : String(error)}`);
-          setNftMintTxHash(null);
-        } finally {
-            setIsMintingNft(false);
-        }
-      };
-
-
-      return (
-        <div className="create-meme">
-          <h2>Create and Tokenize Your Meme</h2>
-          <p>Upload your meme, register its IP, and then either submit it to the contest or mint it as an NFT!</p>
-
-          <form onSubmit={handleProcessMeme}>
-            <div className="form-group">
-              <label htmlFor="meme-file">Meme Image/GIF:</label>
-              <input type="file" id="meme-file" onChange={handleFileChange} accept="image/*" required />
-            </div>
-            <div className="form-group">
-              <label htmlFor="meme-name">Meme Name:</label>
-              <input
-                type="text"
-                id="meme-name"
-                value={memeName}
-                onChange={(e) => setMemeName(e.target.value)}
-                placeholder="e.g., Urashima's Waving Cat"
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="meme-description">Description:</label>
-              <textarea
-                id="meme-description"
-                value={memeDescription}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Describe your meme, its story, or significance."
-                rows={3}
-                required
-              ></textarea>
-            </div>
-            <button type="submit" disabled={!isConnected || !walletClient || !file || !memeName || !memeDescription || ipfsHash !== null}>
-              Process Meme (Upload & Register IP)
-            </button>
-          </form>
-
-          {status && <p className="status-message">{status}</p>}
-
-          {/* Section for Contest Submission */}
-          {ipfsHash && storyProtocolIPId && ( // Only show if meme is processed
-            <div className="contest-submission-section" style={{ marginTop: '20px', borderTop: '1px solid #eee', paddingTop: '20px' }}>
-              <h3>2. Submit to Meme Contest (Requires {parseUnits("10", 18).toString()} PEARL)</h3>
-              <p>
-                To enter the contest, you need to approve our contract to spend {parseUnits("10", 18).toString()} PEARL for the submission fee.
-              </p>
-              {!submissionApproved && (
-                <button
-                  onClick={() => approveSubmissionPearl?.()}
-                  disabled={!isConnected || !approveSubmissionPearl || isApprovingSubmission || isSubmittingMeme}
-                >
-                  {isApprovingSubmission ? 'Approving PEARL...' : 'Approve PEARL for Contest'}
-                </button>
-              )}
-              {submissionApproved && !isMemeSubmitted && (
-                <button
-                  onClick={() => submitMemeToContest?.()}
-                  disabled={!isConnected || !submitMemeToContest || isSubmittingMeme}
-                >
-                  {isSubmittingMeme ? 'Submitting Meme...' : 'Submit Meme to Contest'}
-                </button>
-              )}
-              {submitMemeData?.hash && (
-                <p>
-                  Contest Submission Tx:{' '}
-                  <a href={`https://sepolia.explorer.zora.energy/tx/${submitMemeData.hash}`} target="_blank" rel="noopener noreferrer">
-                    {submitMemeData.hash}
-                  </a>
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Section for NFT Minting */}
-          {ipfsHash && storyProtocolIPId && ( // Only show if meme is processed
-            <div className="nft-minting-section" style={{ marginTop: '20px', borderTop: '1px solid #eee', paddingTop: '20px' }}>
-              <h3>3. Tokenize Meme as NFT (Optional)</h3>
-              <p>Mint your meme as a unique collectible NFT on Zora. (Assuming free mint for this demo)</p>
-              <button
-                onClick={handleMintMemeNFT}
-                disabled={!isConnected || !walletClient || isMintingNft || nftMintTxHash !== null}
-              >
-                {isMintingNft ? 'Minting NFT...' : 'Mint Meme NFT'}
-              </button>
-              {nftMintStatus && <p className="status-message">{nftMintStatus}</p>}
-              {nftMintTxHash && (
-                <p>
-                  NFT Mint Tx:{' '}
-                  <a href={`https://sepolia.explorer.zora.energy/tx/${nftMintTxHash}`} target="_blank" rel="noopener noreferrer">
-                    {nftMintTxHash}
-                  </a>
-                </p>
-              )}
-              {CONTRACT_ADDRESSES.zoraMemeNFTCollection && (
-                    <p>
-                        View Collection:{' '}
-                        <a href={`https://sepolia.explorer.zora.energy/collection/${CONTRACT_ADDRESSES.zoraMemeNFTCollection}`} target="_blank" rel="noopener noreferrer">
-                            {CONTRACT_ADDRESSES.zoraMemeNFTCollection}
-                        </a>
-                    </p>
-                )}
-            </div>
-          )}
-        </div>
-      );
+    const headers = {
+      'Content-Type': 'multipart/form-data',
+      'pinata_api_key': import.meta.env.VITE_PINATA_API_KEY!,
+      'pinata_secret_api_key': import.meta.env.VITE_PINATA_SECRET_KEY!
     };
 
-    export default CreateMeme;
+    try {
+      const response = await axios.post(
+        'https://api.pinata.cloud/pinning/pinFileToIPFS',
+        formData,
+        { 
+          headers,
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity
+        }
+      );
+
+      console.log('Upload successful. IPFS Hash:', response.data.IpfsHash);
+      return response.data.IpfsHash;
+    } catch (error: any) {
+      console.error('Detailed upload error:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      throw new Error(`Failed to upload image to IPFS: ${error.message}`);
+    }
+  };
+
+  const switchToZoraSepolia = async (provider: unknown) => {
+    const ethProvider = provider as { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> };
+    try {
+      // Try switching to Zora Sepolia
+      await ethProvider.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: ZORA_SEPOLIA_PARAMS.chainId }],
+      });
+    } catch (switchError: unknown) {
+      const error = switchError as { code?: number };
+      // If the chain hasn't been added to MetaMask, add it
+      if (error.code === 4902) {
+        try {
+          await ethProvider.request({
+            method: 'wallet_addEthereumChain',
+            params: [ZORA_SEPOLIA_PARAMS],
+          });
+        } catch (addError) {
+          console.error('Error adding Zora Sepolia network:', addError);
+          throw new Error('Could not add Zora Sepolia network to your wallet');
+        }
+      } else {
+        console.error('Error switching to Zora Sepolia:', switchError);
+        throw new Error('Could not switch to Zora Sepolia network');
+      }
+    }
+  };
+
+  const generateAIMeme = async () => {
+    if (!aiPrompt) return;
     
+    try {
+      setIsGeneratingAI(true);
+      
+      // For now, we'll simulate AI generation until backend is ready
+      // In a real implementation, this would call an AI service
+      console.log('AI generation would be called here with:', {
+        prompt: aiPrompt,
+        style: selectedStyle
+      });
+      
+      // Simulate processing time
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Update form with generated content
+      setFormData(prev => ({
+        ...prev,
+        title: `${selectedStyle}: ${aiPrompt}`,
+        description: `AI-generated meme: ${aiPrompt}`,
+        socialLinks: '',
+        fileId: ''
+      }));
+
+      // For now, we'll ask user to upload an image manually
+      alert('AI generation is coming soon! Please upload your meme image manually for now.');
+      setEnhancedPrompt(`Enhanced: ${aiPrompt} in ${selectedStyle} style`);
+
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Error generating AI meme:', error);
+      alert(errorMessage || 'Failed to generate AI meme. Please try again.');
+    } finally {
+      setIsGeneratingAI(false);
+    }
+  };
+
+  const addLog = (message: string) => {
+    setSubmissionLogs(prev => [...prev, message]);
+  };
+
+  const submitMeme = async () => {
+    try {
+      if (!address || !imageFile) {
+        console.error('No wallet connected or no image selected');
+        return;
+      }
+
+      setIsUploading(true);
+      addLog('Starting meme submission process...');
+
+      // 1. First upload image to IPFS via Pinata
+      addLog('Uploading image to IPFS via Pinata...');
+      const pinataFormData = new FormData();
+      pinataFormData.append('file', imageFile);
+
+      const pinataResponse = await axios.post(
+        'https://api.pinata.cloud/pinning/pinFileToIPFS',
+        pinataFormData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            'pinata_api_key': PINATA_API_KEY,
+            'pinata_secret_api_key': PINATA_SECRET_KEY
+          },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity
+        }
+      );
+
+      console.log('Pinata upload response:', pinataResponse.data);
+      const ipfsHash = pinataResponse.data.IpfsHash;
+      addLog(`Image uploaded to IPFS with hash: ${ipfsHash}`);
+
+      // 2. Submit meme to blockchain using wagmi
+      addLog('Submitting meme to blockchain...');
+      
+      if (!MEME_CONTEST_ADDRESS) {
+        throw new Error('Meme contest contract address not configured');
+      }
+
+      writeContract({
+        address: MEME_CONTEST_ADDRESS as `0x${string}`,
+        abi: MemeContestABI,
+        functionName: 'submitMeme',
+        args: [ipfsHash, ''] // ipfsHash and empty storyProtocolIPId for now
+      });
+
+      addLog('Transaction submitted...');
+
+    } catch (error) {
+      console.error('Error submitting meme:', error);
+      addLog(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      if (axios.isAxiosError(error) && error.response?.data) {
+        console.error('Detailed error:', error.response.data);
+        addLog(`Detailed error: ${JSON.stringify(error.response.data)}`);
+      }
+      alert('Failed to submit meme: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      setIsUploading(false);
+    }
+  };
+
+  const handleNext = () => {
+    if (!isConnected) {
+      // Connect wallet using the first available connector
+      if (connectors.length > 0) {
+        connect({ connector: connectors[0] });
+      }
+    } else {
+      setStep(prev => prev === 3 ? 3 : (prev + 1) as 1 | 2 | 3);
+    }
+  };
+
+  // Handle transaction success
+  const handleTransactionSuccess = () => {
+    if (isConfirmed) {
+      setSubmissionSuccess(true);
+      setIsUploading(false);
+      addLog('Meme submitted successfully!');
+    }
+  };
+
+  // Call handleTransactionSuccess when transaction is confirmed
+  if (isConfirmed && !submissionSuccess) {
+    handleTransactionSuccess();
+  }
+
+  const handlePrevious = () => {
+    setStep(prev => prev === 1 ? 1 : (prev - 1) as 1 | 2 | 3);
+  };
+
+  const renderVariations = () => {
+    if (!variations.length) return null;
+
+    return (
+      <div className="mt-6">
+        <h3 className="text-white text-lg font-medium mb-4">Style Variations</h3>
+        <div className="grid grid-cols-3 gap-4">
+          {variations.map((variation, index) => (
+            <div
+              key={index}
+              className={`relative cursor-pointer rounded-lg overflow-hidden ${
+                selectedVariation === index ? 'ring-2 ring-[#FFD700]' : ''
+              }`}
+              onClick={() => {
+                setSelectedVariation(index);
+                setImagePreview(variation);
+              }}
+            >
+              <img
+                src={variation}
+                alt={`Variation ${index + 1}`}
+                className="w-full h-40 object-cover"
+              />
+              <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-sm py-1 px-2">
+                Style {index + 1}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderIPRegistrationStatus = () => {
+    if (!ipRegistrationStatus) return null;
+
+    const config = STATUS_MESSAGES[ipRegistrationStatus];
+
+    return (
+      <div className={`flex items-center gap-2 mt-4 ${
+        ipRegistrationStatus === 'error' ? 'text-red-500' : 'text-[#FFD700]'
+      }`}>
+        {config.icon === 'pending' && (
+          <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+        )}
+        {config.icon === 'success' && (
+          <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+          </svg>
+        )}
+        {config.icon === 'error' && (
+          <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+          </svg>
+        )}
+        <span className="text-sm font-medium">{config.text}</span>
+      </div>
+    );
+  };
+
+  const renderStyleSelection = () => (
+    <div className="space-y-4">
+      <label className="text-[#131315]/60 text-sm font-urbanist">Select Meme Style</label>
+      <div className="grid grid-cols-1 gap-3">
+        {MEME_STYLES.map((style) => (
+          <button
+            key={style.name}
+            onClick={() => setSelectedStyle(style.name as 'Classic Meme' | 'Dank Meme' | 'Wholesome')}
+            className={`flex items-center p-4 rounded-xl transition-all ${
+              selectedStyle === style.name
+                ? 'bg-gradient-to-r from-[#EE5A0E] to-[#0F62FE] text-white'
+                : 'bg-[#FFFBEA] text-[#131315]/60 border border-[#9C9C9C] hover:border-[#EE5A0E] hover:text-[#EE5A0E]'
+            }`}
+          >
+            <span className="text-2xl mr-3">{style.icon}</span>
+            <div className="text-left">
+              <div className="font-medium font-urbanist">{style.name}</div>
+              <div className="text-sm opacity-80 font-urbanist">{style.description}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  const renderGenerationHistory = () => {
+    if (!showHistory || generationHistory.length === 0) return null;
+
+    return (
+      <div className="mt-6 p-4 bg-[#FFFBEA] rounded-xl border border-[#9C9C9C]">
+        <h3 className="text-[#131315] text-lg font-medium mb-4 font-urbanist">Generation History</h3>
+        <div className="space-y-4">
+          {generationHistory.map((result, index) => (
+            <div key={index} className="p-4 bg-[#FFFBEA] rounded-lg border border-[#9C9C9C]">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <span className="text-[#EE5A0E] font-medium">{result.metadata.style}</span>
+                  <p className="text-[#131315]/60 text-sm mt-1">{result.metadata.prompt}</p>
+                  <p className="text-[#131315]/40 text-xs mt-1">Enhanced: {result.metadata.enhancedPrompt}</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setImagePreview(result.imageUrl);
+                    setSelectedVariation(0);
+                  }}
+                  className="px-3 py-1 bg-[#FFFBEA] text-[#EE5A0E] rounded-full text-sm border border-[#EE5A0E] hover:bg-gradient-to-r hover:from-[#EE5A0E] hover:to-[#0F62FE] hover:text-white transition-all"
+                >
+                  USE
+                </button>
+              </div>
+              <img
+                src={result.imageUrl}
+                alt={`Generation ${index + 1}`}
+                className="w-full h-40 object-cover rounded-lg"
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSubmissionLogs = () => (
+    <div className="mt-8 text-left max-w-lg mx-auto">
+      <div className="bg-[#FFFBEA] rounded-xl p-4 font-mono text-sm border border-[#9C9C9C]">
+        {submissionLogs.map((log, index) => (
+          <div key={index} className="text-[#131315]/80">
+            {log}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const renderAIGenerationForm = () => (
+    <div className="space-y-6">
+      <div className="relative">
+        <textarea
+          value={aiPrompt}
+          onChange={(e) => setAiPrompt(e.target.value)}
+          placeholder="Describe your meme idea..."
+          className="w-full h-32 px-6 py-4 bg-[#FFFBEA] text-[#131315] placeholder-[#131315]/40 rounded-2xl border border-[#9C9C9C] focus:border-[#EE5A0E] focus:outline-none font-urbanist"
+        />
+        {enhancedPrompt && (
+          <div className="mt-2 p-3 bg-[#FFFBEA] rounded-xl border border-[#9C9C9C]">
+            <span className="text-[#EE5A0E] text-sm font-medium">Enhanced Prompt:</span>
+            <p className="text-[#131315]/80 text-sm mt-1">{enhancedPrompt}</p>
+          </div>
+        )}
+      </div>
+
+      {renderStyleSelection()}
+
+      <div className="flex gap-4">
+        <button
+          onClick={generateAIMeme}
+          disabled={!aiPrompt || isGeneratingAI}
+          className={`flex-1 px-6 py-3 rounded-full font-urbanist font-medium transition-all ${
+            !aiPrompt || isGeneratingAI 
+              ? 'bg-[#9C9C9C]/20 text-[#131315]/40' 
+              : 'bg-gradient-to-r from-[#EE5A0E] to-[#0F62FE] text-white hover:opacity-90'
+          }`}
+        >
+          {isGeneratingAI ? (
+            <div className="flex items-center justify-center gap-2">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <span>generating...</span>
+            </div>
+          ) : (
+            <span>GENERATE MEME</span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setShowHistory(!showHistory)}
+          className="px-4 py-3 bg-[#FFFBEA] text-[#131315]/60 rounded-full font-urbanist border border-[#9C9C9C] hover:text-[#EE5A0E] hover:border-[#EE5A0E] transition-all"
+        >
+          {showHistory ? 'HIDE HISTORY' : 'SHOW HISTORY'}
+        </button>
+      </div>
+
+      {renderGenerationHistory()}
+    </div>
+  );
+
+  return (
+    <div className="relative min-h-screen bg-[#FFFBEA]">
+      {/* Header Section */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#EE5A0E] via-transparent to-transparent opacity-20" />
+      
+      <div className="relative max-w-[1200px] mx-auto px-4 py-5">
+      <div className="relative w-full h-[300px] overflow-hidden">
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <h1 className="text-[64px] font-bold text-[#131315] font-urbanist text-center">
+            Create Your Meme
+          </h1>
+  
+        </div>
+      </div>
+        {/* Create Container */}
+        <div className="w-[1016px] h-[176px] mx-auto mb-12 p-6 rounded-2xl border border-[#9C9C9C] bg-gradient-to-b from-[#FFFBEA] to-[rgba(238,90,14,0.01)] relative overflow-hidden">
+          <div className="flex items-center justify-between gap-20">
+            {/* Create Section */}
+            <div className="flex flex-col">
+              <div className="flex items-center gap-4">
+                <img src="/magic-wand.svg" alt="Create" className="w-8 h-8" />
+                <h3 className="text-[#131315] text-[32px] font-bold font-urbanist">Create</h3>
+              </div>
+              <div className="flex items-center gap-2 mt-2">
+                <img src="/100-points.svg" alt="100 Points" className="h-4" />
+                <p className="text-[#131315]/60 text-sm font-urbanist">Reach 100 votes</p>
+              </div>
+            </div>
+
+            {/* Mint Meme NFT Section */}
+            <div className="flex items-center gap-4">
+              <img src="/trophy-up.svg" alt="Mint Meme NFT" className="w-8 h-8" />
+              <div>
+                <h3 className="text-[#131315] text-lg font-semibold mb-1 font-urbanist">Mint Meme NFT</h3>
+                <p className="text-[#131315]/60 text-sm font-urbanist">Get rewarded</p>
+              </div>
+            </div>
+
+            {/* ADs AI Agent Section */}
+            <div className="flex items-center gap-4">
+              <img src="/board.png" alt="ADs AI Agent" className="w-8 h-8" />
+              <div>
+                <h3 className="text-[#131315] text-lg font-semibold mb-1 font-urbanist">ADs AI Agent</h3>
+                <p className="text-[#131315]/60 text-sm font-urbanist">Promote your meme</p>
+              </div>
+            </div>
+
+            {/* Owner NFT Section */}
+            <div className="flex items-center gap-4">
+              <img src="/castle.svg" alt="Owner NFT" className="w-8 h-8" />
+              <div>
+                <h3 className="text-[#131315] text-lg font-semibold mb-1 font-urbanist">Owner NFT</h3>
+                <p className="text-[#131315]/60 text-sm font-urbanist">Get exclusive benefits</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Progress Steps */}
+        <div className="flex items-stretch w-full mb-12 bg-[#FFFBEA] rounded-full overflow-hidden h-12 border border-[#9C9C9C]">
+          <div className={`flex-1 flex items-center gap-3 px-6 ${
+            step === 1 ? 'bg-gradient-to-r from-[#EE5A0E] to-[#0F62FE] text-white' : 'text-[#131315]'
+          }`}>
+            {step === 1 && (
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+            )}
+            <span className="text-base font-medium font-urbanist">1. MEME</span>
+          </div>
+
+          <div className={`flex-1 flex items-center gap-3 px-6 ${
+            step === 2 ? 'bg-gradient-to-r from-[#EE5A0E] to-[#0F62FE] text-white' : 'text-[#131315]'
+          }`}>
+            {step === 2 && (
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+            )}
+            <span className="text-base font-medium font-urbanist">
+              {isConnected ? '2. SUBMIT MEME' : '2. CONNECT WALLET'}
+            </span>
+          </div>
+
+          <div className={`flex-1 flex items-center gap-3 px-6 ${
+            step === 3 ? 'bg-gradient-to-r from-[#EE5A0E] to-[#0F62FE] text-white' : 'text-[#131315]'
+          }`}>
+            {step === 3 && (
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+            )}
+            <span className="text-base font-medium font-urbanist">3. AI MARKETING</span>
+          </div>
+        </div>
+
+        {/* Upload Method Selection */}
+        <div className="flex gap-2 mb-8 bg-[#FFFBEA] p-1 rounded-full max-w-md mx-auto border border-[#9C9C9C]">
+          <button
+            onClick={() => setUploadMethod('ai')}
+            className={`flex-1 px-6 py-2.5 rounded-full font-urbanist font-medium transition-all ${
+              uploadMethod === 'ai' 
+                ? 'bg-gradient-to-r from-[#EE5A0E] to-[#0F62FE] text-white' 
+                : 'text-[#131315]/60 hover:text-[#131315]'
+            }`}
+          >
+            GENERATE WITH AI
+          </button>
+          <button
+            onClick={() => setUploadMethod('manual')}
+            className={`flex-1 px-6 py-2.5 rounded-full font-urbanist font-medium transition-all ${
+              uploadMethod === 'manual' 
+                ? 'bg-[#FFFBEA] text-[#EE5A0E] border border-[#EE5A0E]' 
+                : 'text-[#131315]/60 hover:text-[#131315]'
+            }`}
+          >
+            UPLOAD YOUR MEME
+          </button>
+        </div>
+
+        <p className="text-[#131315]/60 text-center text-sm mb-8 font-urbanist">
+          You can either generate your memes with our AI superpowers or<br />
+          upload your own meme that you created before
+        </p>
+
+        {/* Main Form Section */}
+        {step === 1 && (
+          <div className="flex gap-8">
+            {/* Left Column - Upload/Preview */}
+            <div className="w-1/2 space-y-6">
+              {uploadMethod === 'ai' ? (
+                renderAIGenerationForm()
+              ) : (
+                <div className="relative">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                    id="meme-upload"
+                  />
+                  <label
+                    htmlFor="meme-upload"
+                    className="block w-full aspect-square bg-[#FFFBEA] border border-[#9C9C9C] rounded-2xl cursor-pointer hover:border-[#EE5A0E] transition-colors"
+                  >
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                      <div className="w-12 h-12 mb-4 text-[#EE5A0E]">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                      </div>
+                      <span className="text-[#131315]/60 font-urbanist">Click to upload your meme</span>
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              {imagePreview && (
+                <div className="relative w-full aspect-square bg-[#FFFBEA] rounded-2xl overflow-hidden border border-[#9C9C9C]">
+                  <img
+                    src={imagePreview}
+                    alt="Meme preview"
+                    className="w-full h-full object-contain"
+                  />
+                  <button
+                    onClick={handleRemoveImage}
+                    className="absolute top-4 right-4 px-4 py-2 bg-[#FFFBEA]/80 backdrop-blur-sm text-[#131315] rounded-full font-urbanist hover:bg-[#FFFBEA] transition-colors border border-[#9C9C9C]"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Right Column - Form Fields */}
+            <div className="w-1/2 space-y-4">
+              <input
+                type="text"
+                name="title"
+                value={formData.title}
+                onChange={handleInputChange}
+                placeholder="Title of your meme"
+                className="w-full px-6 py-4 bg-[#FFFBEA] text-[#131315] placeholder-[#131315]/40 rounded-full border border-[#9C9C9C] focus:border-[#EE5A0E] focus:outline-none font-urbanist"
+              />
+              <textarea
+                name="description"
+                value={formData.description}
+                onChange={handleInputChange}
+                placeholder="Description of your meme"
+                rows={4}
+                className="w-full px-6 py-4 bg-[#FFFBEA] text-[#131315] placeholder-[#131315]/40 rounded-2xl border border-[#9C9C9C] focus:border-[#EE5A0E] focus:outline-none font-urbanist"
+              />
+
+              <input
+                type="text"
+                name="socialLinks"
+                value={formData.socialLinks}
+                onChange={handleInputChange}
+                placeholder="Your social link (x.com)"
+                className="w-full px-6 py-4 bg-[#FFFBEA] text-[#131315] placeholder-[#131315]/40 rounded-2xl border border-[#9C9C9C] focus:border-[#EE5A0E] focus:outline-none font-urbanist"
+              />
+
+              <select
+                name="networkId"
+                value={formData.networkId}
+                onChange={handleInputChange}
+                className="w-full px-6 py-4 bg-[#FFFBEA] text-[#131315]/60 rounded-full border border-[#9C9C9C] focus:border-[#EE5A0E] focus:outline-none font-urbanist appearance-none"
+                aria-label="Select network"
+              >
+                <option value="999999999">Select network</option>
+                <option value="999999999">Zora Sepolia</option>
+              </select>
+
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    id="royalty"
+                    checked={acceptRoyalty}
+                    onChange={(e) => setAcceptRoyalty(e.target.checked)}
+                    className="sr-only"
+                  />
+                  <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                    acceptRoyalty 
+                      ? 'border-[#EE5A0E] bg-[#EE5A0E]' 
+                      : 'border-[#9C9C9C] bg-transparent'
+                  }`}>
+                    {acceptRoyalty && (
+                      <div className="w-3 h-3 rounded-full bg-white" />
+                    )}
+                  </div>
+                </div>
+                <label htmlFor="royalty" className="text-[#131315]/60 font-urbanist">
+                  I confirm that I accept the 3% royalty fee.
+                </label>
+              </div>
+
+              <button
+                onClick={handleNext}
+                disabled={!acceptRoyalty || (!imageFile && !formData.fileId) || !formData.title}
+                className={`w-full px-6 py-4 rounded-full font-urbanist font-medium transition-all ${
+                  !acceptRoyalty || (!imageFile && !formData.fileId) || !formData.title
+                    ? 'bg-[#9C9C9C]/50 text-[#131315]/60'
+                    : 'bg-gradient-to-r from-[#EE5A0E] to-[#0F62FE] text-white hover:opacity-90'
+                }`}
+              >
+                {isConnected ? 'NEXT: SUBMIT MEME →' : 'CONNECT WALLET TO CONTINUE →'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="flex flex-col items-center justify-center py-16">
+            {!isConnected ? (
+              <div className="text-center">
+                <h2 className="text-2xl font-bold text-black mb-6 font-urbanist">Connect Your Wallet</h2>
+                <p className="text-black/60 mb-8 font-urbanist max-w-sm">
+                  Connect your wallet to submit your meme to the blockchain
+                </p>
+                <button
+                  onClick={() => connectors.length > 0 && connect({ connector: connectors[0] })}
+                  className="px-8 py-4 bg-gradient-to-r from-[#EE5A0E] to-[#0F62FE] text-white rounded-full font-urbanist font-medium hover:opacity-90 transition-all"
+                >
+                  connect wallet
+                </button>
+              </div>
+            ) : submissionSuccess ? (
+              <div className="text-center">
+                <div className="w-16 h-16 mb-6 mx-auto">
+                  <svg className="w-full h-full text-[#EE5A0E]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-4 font-['Poppins']">Meme Submitted Successfully!</h2>
+                <p className="text-white/60 mb-8 font-['Poppins'] max-w-sm">
+                  Your meme has been successfully submitted to the blockchain.
+                </p>
+                <div className="flex gap-4">
+                  <Link
+                    to="/explore"
+                    className="px-8 py-4 bg-gradient-to-r from-[#EE5A0E] to-[#0F62FE] text-white rounded-full font-['Poppins'] font-medium hover:opacity-90 transition-all"
+                  >
+                    DISCOVER MEMES →
+                  </Link>
+                  <Link
+                    to="/"
+                    className="px-8 py-4 bg-[#FFFBEA] text-[#131315] rounded-full font-['Poppins'] font-medium border border-[#9C9C9C] hover:border-[#EE5A0E] hover:text-[#EE5A0E] transition-all"
+                  >
+                    BACK TO HOME
+                  </Link>
+                </div>
+              </div>
+            ) : isUploading ? (
+              <div className="text-center">
+                <div className="w-16 h-16 mx-auto mb-6">
+                  <svg className="animate-spin w-full h-full text-[#EE5A0E]" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-4 font-['Poppins']">Submitting Your Meme</h2>
+                <p className="text-white/60 mb-4 font-['Poppins'] max-w-sm">
+                  Please wait while we submit your meme to the blockchain...
+                </p>
+                {renderSubmissionLogs()}
+              </div>
+            ) : (
+              <div className="text-center">
+                <h2 className="text-2xl font-bold text-black mb-4 font-['Poppins']">Ready to Submit</h2>
+                <p className="text-black/90 mb-8 font-['Poppins'] max-w-sm">
+                  Your meme is ready to be submitted to the blockchain
+                </p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={handlePrevious}
+                    className="px-8 py-4 bg-[#FFFBEA] text-[#131315] rounded-full font-urbanist font-medium border border-[#9C9C9C] hover:border-[#EE5A0E] hover:text-[#EE5A0E] transition-all"
+                  >
+                    ← PREVIOUS
+                  </button>
+                  <button
+                    onClick={submitMeme}
+                    className="px-8 py-4 bg-gradient-to-r from-[#EE5A0E] to-[#0F62FE] text-white rounded-full font-urbanist font-medium hover:opacity-90 transition-all"
+                  >
+                    SUBMIT MEME
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="w-16 h-16 mb-6">
+              <svg className="w-full h-full text-[#FFD700]" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-4 font-['Poppins']">AI Marketing Coming Soon</h2>
+            <p className="text-white/60 mb-8 font-['Poppins'] max-w-sm">
+              We're working on something magical to help promote your memes with AI. Stay tuned!
+            </p>
+            <button
+              onClick={handlePrevious}
+              className="px-8 py-4 bg-[#1A1A1A] text-white rounded-full font-['Poppins'] font-medium hover:bg-[#1A1A1A]/80 transition-all"
+            >
+              ← back to submission
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default CreateMeme; 

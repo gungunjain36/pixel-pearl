@@ -1,5 +1,5 @@
 {
-  "name": "frontend",
+  "name": "pixel-pearl-frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@rainbow-me/rainbowkit": "^2.2.7",
     "@reown/walletkit": "^1.2.6",
     "@story-protocol/core-sdk": "^1.3.2",
     "@tailwindcss/vite": "^4.1.10",
@@ -19,9 +20,11 @@
     "@zoralabs/coins-sdk": "^0.2.1",
     "@zoralabs/protocol-sdk": "^0.13.8",
     "@zoralabs/zdk": "^2.4.0",
+    "axios": "^1.10.0",
     "connectkit": "^1.8.0",
     "ethers": "^6.14.4",
     "ipfs-http-client": "^60.0.1",
+    "pinata": "^2.4.8",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.2",
@@ -31,8 +34,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",
-    "@types/react": "^19.1.2",
-    "@types/react-dom": "^19.1.2",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.4.1",
     "eslint": "^9.25.0",
     "eslint-plugin-react-hooks": "^5.2.0",

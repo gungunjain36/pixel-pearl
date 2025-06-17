@@ -1,142 +1,292 @@
-    // frontend/src/components/ExploreMysteryCoins.tsx
-    import React, { useState } from 'react';
-    import { useAccount, useWalletClient } from 'wagmi';
-    import { fetchZoraCoinDetails, tradeZoraCoin } from '../services/zora';
-    import { Address, parseEther } from 'viem';
-    import { formatEther } from 'ethers';
+import { useState, useEffect } from 'react';
+import { useAccount } from 'wagmi';
+import useContracts from '../hooks/useContracts';
 
-    interface ZoraCoinData {
-      address: Address;
-      name: string;
-      symbol: string;
-      tokenURI: string;
-      creator: Address;
-      pricePerToken: bigint;
-      maxSupply: bigint;
-      maxPerWallet: bigint;
-      fundsRecipient: Address;
-    }
+interface Meme {
+  id: number;
+  creator: string;
+  ipfsHash: string;
+  storyProtocolIPId: string;
+  votes: number;
+  submissionTime: number;
+  exists: boolean;
+  metadata?: {
+    name: string;
+    description: string;
+    image: string;
+  };
+}
 
-    const ExploreMysteryCoins: React.FC = () => {
-      const { address, isConnected } = useAccount();
-      const { data: walletClient } = useWalletClient();
-      const [coinAddressInput, setCoinAddressInput] = useState<string>('');
-      const [selectedCoin, setSelectedCoin] = useState<ZoraCoinData | null>(null);
-      const [quantityToBuy, setQuantityToBuy] = useState<string>('1');
-      const [status, setStatus] = useState('');
-      const [txHash, setTxHash] = useState<string | null>(null);
+// Create data URL placeholders to avoid DNS issues
+const createPlaceholderImage = (color: string, text: string) => {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+      <rect width="400" height="400" fill="${color}"/>
+      <text x="200" y="200" font-family="Arial, sans-serif" font-size="24" font-weight="bold" 
+            text-anchor="middle" dy="0.35em" fill="white" stroke="black" stroke-width="1">
+        ${text}
+      </text>
+    </svg>
+  `;
+  return `data:image/svg+xml;base64,${btoa(svg)}`;
+};
 
-      const handleFetchCoinDetails = async () => {
-        if (!coinAddressInput) {
-          setStatus("Please enter a coin address.");
-          return;
-        }
-        try {
-          setStatus("Fetching coin details...");
-          const details = await fetchZoraCoinDetails(coinAddressInput as Address);
-          setSelectedCoin(details);
-          setStatus("Coin details fetched!");
-        } catch (error) {
-          console.error("Error fetching coin details:", error);
-          setStatus(`Error fetching coin details: ${error instanceof Error ? error.message : String(error)}`);
-          setSelectedCoin(null);
-        }
-      };
+const fallbackImage = createPlaceholderImage('#CCCCCC', 'Image Not Found');
+const loadingImage = createPlaceholderImage('#E0E0E0', 'Loading...');
 
-      const handleBuyCoin = async () => {
-        if (!isConnected || !walletClient || !selectedCoin || !quantityToBuy || parseFloat(quantityToBuy) <= 0) {
-          setStatus("Please connect your wallet, select a coin, and enter a valid quantity.");
-          return;
-        }
-        if (selectedCoin.pricePerToken === 0n) {
-          setStatus("This coin appears to have a free mint, or price not loaded. Proceeding without ETH value.");
-        }
+const ExploreMemes: React.FC = () => {
+  const { isConnected } = useAccount();
+  const [memes, setMemes] = useState<Meme[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [votingMeme, setVotingMeme] = useState<number | null>(null);
 
+  const {
+    voteForMeme,
+    getContestResults,
+    isPending,
+    isConfirming,
+    isConfirmed,
+    error
+  } = useContracts();
 
-        setStatus(`Buying ${quantityToBuy} of ${selectedCoin.symbol}...`);
-        try {
-          const quantityBigInt = BigInt(parseFloat(quantityToBuy));
-          // Multiply quantity by 10^18 if the token has 18 decimals and quantity is a raw integer
-          // Assuming `quantityToBuy` is a whole number here. If not, use parseUnits.
-          const quantityWithDecimals = quantityBigInt * BigInt(10)**18; // Assuming CoinV4 has 18 decimals
+  const { data: contestResults } = getContestResults();
 
-          const totalEthAmount = selectedCoin.pricePerToken * quantityBigInt; // Total ETH needed for raw quantity
+  useEffect(() => {
+    const fetchMemes = async () => {
+      try {
+        // This would be replaced with actual contract calls to get memes
+        const mockMemes: Meme[] = [
+          {
+            id: 1,
+            creator: '0x1234567890123456789012345678901234567890',
+            ipfsHash: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+            storyProtocolIPId: 'story_123',
+            votes: 42,
+            submissionTime: Date.now() - 86400000,
+            exists: true,
+            metadata: {
+              name: 'Doge to the Moon',
+              description: 'Classic Doge meme with a crypto twist',
+              image: createPlaceholderImage('#FFD700', '🐕 Doge Meme')
+            }
+          },
+          {
+            id: 2,
+            creator: '0x2345678901234567890123456789012345678901',
+            ipfsHash: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdH',
+            storyProtocolIPId: 'story_124',
+            votes: 35,
+            submissionTime: Date.now() - 43200000,
+            exists: true,
+            metadata: {
+              name: 'Pepe Trading NFTs',
+              description: 'Pepe discovering the world of NFT trading',
+              image: createPlaceholderImage('#00FF00', '🐸 Pepe NFT')
+            }
+          },
+          {
+            id: 3,
+            creator: '0x3456789012345678901234567890123456789012',
+            ipfsHash: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdI',
+            storyProtocolIPId: 'story_125',
+            votes: 28,
+            submissionTime: Date.now() - 21600000,
+            exists: true,
+            metadata: {
+              name: 'Wojak DeFi Emotions',
+              description: 'The emotional journey of DeFi investing',
+              image: createPlaceholderImage('#FF6B6B', '😱 Wojak DeFi')
+            }
+          }
+        ];
 
-          const { txHash: tradeTxHash } = await tradeZoraCoin(
-            walletClient,
-            selectedCoin.address,
-            quantityWithDecimals,
-            totalEthAmount
-          );
-
-          setTxHash(tradeTxHash);
-          setStatus(`Successfully bought ${quantityToBuy} ${selectedCoin.symbol}! Tx Hash: ${tradeTxHash}`);
-        } catch (error) {
-          console.error("Error buying coin:", error);
-          setStatus(`Error buying coin: ${error instanceof Error ? error.message : String(error)}`);
-          setTxHash(null);
-        }
-      };
-
-      return (
-        <div className="explore-mystery-coins">
-          <h2>Explore Mysterious Box Coins</h2>
-          <p>Enter a Zora CoinV4 address to view and buy "Mystery Box" content tokens.</p>
-
-          <div className="form-group">
-            <label htmlFor="coin-address-input">Coin Address:</label>
-            <input
-              type="text"
-              id="coin-address-input"
-              value={coinAddressInput}
-              onChange={(e) => setCoinAddressInput(e.target.value)}
-              placeholder="0x..."
-            />
-            <button onClick={handleFetchCoinDetails} disabled={!coinAddressInput}>
-              Fetch Coin Details
-            </button>
-          </div>
-
-          {selectedCoin && (
-            <div className="coin-details-card">
-              <h3>{selectedCoin.name} ({selectedCoin.symbol})</h3>
-              <p>Address: {selectedCoin.address}</p>
-              <p>Creator: {selectedCoin.creator.substring(0,6)}...{selectedCoin.creator.slice(-4)}</p>
-              <p>Content: <a href={selectedCoin.tokenURI} target="_blank" rel="noopener noreferrer">View Content</a></p>
-              <p>Price per Token: {formatEther(selectedCoin.pricePerToken)} ETH</p>
-              <p>Max Supply: {selectedCoin.maxSupply.toString()}</p>
-              <p>Max Per Wallet: {selectedCoin.maxPerWallet.toString()}</p>
-              <p>Funds Recipient: {selectedCoin.fundsRecipient.substring(0,6)}...{selectedCoin.fundsRecipient.slice(-4)}</p>
-
-              <div className="form-group">
-                <label htmlFor="quantity-to-buy">Quantity to Buy:</label>
-                <input
-                  type="number"
-                  id="quantity-to-buy"
-                  value={quantityToBuy}
-                  onChange={(e) => setQuantityToBuy(e.target.value)}
-                  min="1"
-                  step="1"
-                />
-              </div>
-              <button
-                onClick={handleBuyCoin}
-                disabled={!isConnected || !walletClient || parseFloat(quantityToBuy) <= 0 || !selectedCoin}
-              >
-                Buy Coin ({formatEther(selectedCoin.pricePerToken * BigInt(parseFloat(quantityToBuy || '0')))} ETH)
-              </button>
-            </div>
-          )}
-
-          {status && <p className="status-message">{status}</p>}
-          {txHash && (
-            <p>
-              Transaction Hash: <a href={`https://sepolia.explorer.zora.energy/tx/${txHash}`} target="_blank" rel="noopener noreferrer">{txHash}</a>
-            </p>
-          )}
-        </div>
-      );
+        setMemes(mockMemes);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error fetching memes:', error);
+        setLoading(false);
+      }
     };
 
-    export default ExploreMysteryCoins;
+    fetchMemes();
+  }, []);
+
+  const handleVote = async (memeId: number) => {
+    if (!isConnected) {
+      alert('Please connect your wallet to vote');
+      return;
+    }
+
+    try {
+      setVotingMeme(memeId);
+      await voteForMeme(memeId);
+      
+      // Update local state to reflect the vote
+      setMemes(prevMemes => 
+        prevMemes.map(meme => 
+          meme.id === memeId 
+            ? { ...meme, votes: meme.votes + 1 }
+            : meme
+        )
+      );
+    } catch (error) {
+      console.error('Voting failed:', error);
+    } finally {
+      setVotingMeme(null);
+    }
+  };
+
+  const formatTimeAgo = (timestamp: number) => {
+    const now = Date.now();
+    const diff = now - timestamp;
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const days = Math.floor(hours / 24);
     
+    if (days > 0) return `${days} day${days > 1 ? 's' : ''} ago`;
+    if (hours > 0) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    return 'Less than an hour ago';
+  };
+
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="text-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading memes...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-7xl mx-auto p-6">
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-bold text-gray-800 mb-4">Explore Memes</h1>
+        <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+          Discover trending memes, vote for your favorites, and help decide the next viral sensation!
+        </p>
+      </div>
+
+      {/* Contest Results */}
+      {contestResults && (
+        <div className="bg-gradient-to-r from-yellow-400 to-orange-500 text-white p-6 rounded-xl mb-8">
+          <h2 className="text-2xl font-bold mb-2">🏆 Contest Results</h2>
+          <p>Winning Meme ID: {String(contestResults[0] || 'N/A')}</p>
+          <p>Winner: {String(contestResults[1] || 'N/A')}</p>
+          <p>Total Votes: {String(contestResults[2] || 'N/A')}</p>
+        </div>
+      )}
+
+      {/* Memes Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        {memes.map((meme) => (
+          <div key={meme.id} className="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow">
+            <div className="aspect-square relative">
+              <img
+                src={meme.metadata?.image || loadingImage}
+                alt={meme.metadata?.name || 'Meme'}
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  target.src = fallbackImage;
+                }}
+              />
+              <div className="absolute top-4 right-4 bg-black bg-opacity-70 text-white px-3 py-1 rounded-full">
+                #{meme.id}
+              </div>
+            </div>
+            
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-gray-800 mb-2">
+                {meme.metadata?.name || `Meme #${meme.id}`}
+              </h3>
+              
+              <p className="text-gray-600 mb-4 line-clamp-2">
+                {meme.metadata?.description || 'No description available'}
+              </p>
+              
+              <div className="flex items-center justify-between mb-4">
+                <div className="text-sm text-gray-500">
+                  <p>Creator: {meme.creator.slice(0, 6)}...{meme.creator.slice(-4)}</p>
+                  <p>{formatTimeAgo(meme.submissionTime)}</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-purple-600">{meme.votes}</div>
+                  <div className="text-sm text-gray-500">votes</div>
+                </div>
+              </div>
+              
+              <button
+                onClick={() => handleVote(meme.id)}
+                disabled={!isConnected || votingMeme === meme.id || isPending || isConfirming}
+                className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 px-4 rounded-lg font-semibold hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                {votingMeme === meme.id 
+                  ? 'Voting...' 
+                  : isConnected 
+                    ? '👍 Vote for this Meme' 
+                    : 'Connect Wallet to Vote'
+                }
+              </button>
+              
+              {/* Additional Info */}
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <div className="flex justify-between text-xs text-gray-500">
+                  <span>IPFS: {meme.ipfsHash.slice(0, 8)}...</span>
+                  <span>Story: {meme.storyProtocolIPId.slice(0, 8)}...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {memes.length === 0 && (
+        <div className="text-center py-12">
+          <div className="text-6xl mb-4">🎭</div>
+          <h2 className="text-2xl font-bold text-gray-700 mb-4">No Memes Yet</h2>
+          <p className="text-gray-600 mb-6">Be the first to submit a meme to the contest!</p>
+          <a 
+            href="/create-meme" 
+            className="inline-block bg-purple-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-purple-700 transition-colors"
+          >
+            Create Your First Meme
+          </a>
+        </div>
+      )}
+
+      {/* Transaction Status */}
+      {isPending && (
+        <div className="fixed bottom-4 right-4 p-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded-lg shadow-lg">
+          <p>Vote submitted. Waiting for confirmation...</p>
+        </div>
+      )}
+
+      {isConfirming && (
+        <div className="fixed bottom-4 right-4 p-4 bg-blue-100 border border-blue-400 text-blue-700 rounded-lg shadow-lg">
+          <p>Vote confirming...</p>
+        </div>
+      )}
+
+      {isConfirmed && (
+        <div className="fixed bottom-4 right-4 p-4 bg-green-100 border border-green-400 text-green-700 rounded-lg shadow-lg">
+          <p>Vote confirmed! 🎉</p>
+        </div>
+      )}
+
+      {error && (
+        <div className="fixed bottom-4 right-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg shadow-lg max-w-sm">
+          <p>Error: {error instanceof Error ? error.message : String(error)}</p>
+        </div>
+      )}
+
+      {!isConnected && (
+        <div className="fixed bottom-4 left-4 p-4 bg-orange-100 border border-orange-400 text-orange-700 rounded-lg shadow-lg">
+          <p>💡 Connect your wallet to vote for memes!</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ExploreMemes;

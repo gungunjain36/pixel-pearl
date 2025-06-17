@@ -1,240 +1,360 @@
-    // frontend/src/components/PearlWallet.tsx
-    import React, { useState } from 'react';
-    import { useAccount, useBalance, useReadContract, useWriteContract } from 'wagmi';
-    import { formatUnits, parseEther, parseUnits } from 'viem';
-    import { CONTRACT_ADDRESSES } from '../utils/zora-config';
-    import PearlTokenABI from '../abi/PearlToken.json';
-    import PearlExchangeABI from '../abi/PearlExchange.json';
+import React, { useState, useEffect } from 'react';
+import { useAccount, useBalance } from 'wagmi';
+import useContracts from '../hooks/useContracts';
 
-    const PearlWallet: React.FC = () => {
-      const { address, isConnected } = useAccount();
-      const [pearlAmountToSwap, setPearlAmountToSwap] = useState<string>('');
-      const [ethAmountToSwap, setEthAmountToSwap] = useState<string>('');
-      const [status, setStatus] = useState('');
+interface TransactionTiming {
+  startTime: number;
+  endTime?: number;
+  type: 'normal' | 'fast' | 'instant';
+  hash?: string;
+}
+
+const PearlWallet: React.FC = () => {
+  const { address, isConnected } = useAccount();
+  const [ethAmount, setEthAmount] = useState('');
+  const [pearlAmount, setPearlAmount] = useState('');
+  const [transferTo, setTransferTo] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
+  const [transactionTiming, setTransactionTiming] = useState<TransactionTiming | null>(null);
+
+  const {
+    usePearlBalance,
+    exchangeEthForPearl,
+    exchangePearlForEth,
+    fastExchangeEthForPearl,
+    instantExchangeEthForPearl,
+    transferPearl,
+    getExchangeRate,
+    formatEther,
+    isPending,
+    isConfirming,
+    isConfirmed,
+    error,
+    hash,
+    chainId,
+    isZoraSepolia
+  } = useContracts();
+
+  const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
+    address: address,
+  });
+
+  const { data: pearlBalance, refetch: refetchPearlBalance } = usePearlBalance();
+  const { data: exchangeRate } = getExchangeRate();
+
+  // Monitor transaction completion times and refresh balances
+  useEffect(() => {
+    if (isConfirmed && transactionTiming && !transactionTiming.endTime) {
+      const endTime = Date.now();
+      const duration = (endTime - transactionTiming.startTime) / 1000;
+      setTransactionTiming(prev => prev ? { ...prev, endTime, hash } : null);
       
-      const { writeContract } = useWriteContract();
+      console.log(`🎉 Transaction completed in ${duration.toFixed(1)} seconds using ${transactionTiming.type} speed!`);
+      
+      // Refresh balances after transaction completion
+      setTimeout(() => {
+        refetchEthBalance();
+        refetchPearlBalance();
+      }, 1000);
+    }
+  }, [isConfirmed, transactionTiming, hash]);
 
-      // Read Pearl Token balance
-      const { data: pearlBalanceData, refetch: refetchPearlBalance } = useBalance({
-        address: address,
-        token: CONTRACT_ADDRESSES.pearlToken as `0x${string}`,
-        query: {
-          enabled: isConnected,
-          refetchInterval: 5000, // Auto-refetch every 5 seconds
-        },
-      });
-      const pearlBalance = pearlBalanceData ? formatUnits(pearlBalanceData.value, 18) : '0';
+  const startTransactionTimer = (type: 'normal' | 'fast' | 'instant') => {
+    setTransactionTiming({
+      startTime: Date.now(),
+      type
+    });
+  };
 
-      // Read Exchange Rate
-      const { data: exchangeRateRaw } = useReadContract({
-        address: CONTRACT_ADDRESSES.pearlExchange as `0x${string}`,
-        abi: PearlExchangeABI.abi,
-        functionName: 'pearlPerEthRate',
-        query: {
-          enabled: isConnected,
-          refetchInterval: 10000, // Refetch every 10 seconds
-        },
-      });
-      const pearlPerEthRate = exchangeRateRaw ? Number(formatUnits(exchangeRateRaw as bigint, 0)) : 0;
+  const handleEthToPearl = async () => {
+    if (!ethAmount) return;
+    try {
+      startTransactionTimer('normal');
+      await exchangeEthForPearl(ethAmount);
+      setEthAmount('');
+    } catch (error) {
+      console.error('Exchange failed:', error);
+      setTransactionTiming(null);
+    }
+  };
 
-      const handlePearlToEthSwap = async () => {
-        if (!isConnected || !pearlAmountToSwap || parseFloat(pearlAmountToSwap) <= 0) {
-          setStatus("Please connect wallet and enter a valid Pearl amount.");
-          return;
-        }
+  const handleFastEthToPearl = async () => {
+    if (!ethAmount) return;
+    try {
+      startTransactionTimer('fast');
+      await fastExchangeEthForPearl(ethAmount);
+      setEthAmount('');
+    } catch (error) {
+      console.error('Fast exchange failed:', error);
+      setTransactionTiming(null);
+    }
+  };
 
-        try {
-          setStatus("Approving Pearl tokens...");
-          
-          // First approve Pearl tokens
-          const approveHash = await writeContract({
-            address: CONTRACT_ADDRESSES.pearlToken as `0x${string}`,
-            abi: PearlTokenABI.abi,
-            functionName: 'approve',
-            args: [CONTRACT_ADDRESSES.pearlExchange, parseUnits(pearlAmountToSwap, 18)],
-          });
+  const handleInstantEthToPearl = async () => {
+    if (!ethAmount) return;
+    try {
+      startTransactionTimer('instant');
+      await instantExchangeEthForPearl(ethAmount);
+      setEthAmount('');
+    } catch (error) {
+      console.error('Instant exchange failed:', error);
+      setTransactionTiming(null);
+    }
+  };
 
-          setStatus("Approval submitted. Waiting for confirmation...");
-          
-          // Wait for approval transaction
-          // Note: In a real app, you'd wait for the approval transaction to complete
-          // before executing the swap
-          
-          setTimeout(async () => {
-            setStatus("Now swapping Pearl for ETH...");
-            const swapHash = await writeContract({
-              address: CONTRACT_ADDRESSES.pearlExchange as `0x${string}`,
-              abi: PearlExchangeABI.abi,
-              functionName: 'exchangePearlForEth',
-              args: [parseUnits(pearlAmountToSwap, 18)],
-            });
+  const handlePearlToEth = async () => {
+    if (!pearlAmount) return;
+    try {
+      await exchangePearlForEth(pearlAmount);
+      setPearlAmount('');
+    } catch (error) {
+      console.error('Exchange failed:', error);
+    }
+  };
 
-            setStatus(`Swap transaction submitted: ${swapHash}`);
-            setPearlAmountToSwap('');
-            refetchPearlBalance();
-          }, 3000);
+  const handleTransfer = async () => {
+    if (!transferTo || !transferAmount) return;
+    try {
+      await transferPearl(transferTo, transferAmount);
+      setTransferTo('');
+      setTransferAmount('');
+    } catch (error) {
+      console.error('Transfer failed:', error);
+    }
+  };
 
-        } catch (error) {
-          console.error('Error swapping Pearl to ETH:', error);
-          setStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-      };
+  const getSpeedEmoji = (type: string) => {
+    switch (type) {
+      case 'normal': return '🐢';
+      case 'fast': return '⚡';
+      case 'instant': return '🔥';
+      default: return '⏱️';
+    }
+  };
 
-      const handleEthToPearlSwap = async () => {
-        if (!isConnected || !ethAmountToSwap || parseFloat(ethAmountToSwap) <= 0) {
-          setStatus("Please connect wallet and enter a valid ETH amount.");
-          return;
-        }
+  if (!isConnected) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <div className="bg-white rounded-xl shadow-lg p-8 text-center">
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">Pearl Wallet</h2>
+          <p className="text-gray-600">Please connect your wallet to access Pearl Wallet features.</p>
+        </div>
+      </div>
+    );
+  }
 
-        try {
-          setStatus("Swapping ETH for Pearl...");
-          
-          const hash = await writeContract({
-            address: CONTRACT_ADDRESSES.pearlExchange as `0x${string}`,
-            abi: PearlExchangeABI.abi,
-            functionName: 'exchangeEthForPearl',
-            value: parseEther(ethAmountToSwap),
-          });
+  return (
+    <div className="max-w-4xl mx-auto p-6">
+      <div className="bg-white rounded-xl shadow-lg p-8">
+        <h2 className="text-3xl font-bold text-gray-800 mb-8 text-center">
+          ⚡ Pearl Wallet {isZoraSepolia ? '- Zora Sepolia' : ''}
+        </h2>
+        
+        {/* Balance Display */}
+        <div className="grid md:grid-cols-2 gap-6 mb-8">
+          <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white p-6 rounded-lg">
+            <h3 className="text-lg font-semibold mb-2">ETH Balance</h3>
+            <p className="text-2xl font-bold">
+              {ethBalance ? formatEther(ethBalance.value).slice(0, 8) : '0'} ETH
+            </p>
+          </div>
+          <div className="bg-gradient-to-r from-purple-500 to-pink-600 text-white p-6 rounded-lg">
+            <h3 className="text-lg font-semibold mb-2">Pearl Balance</h3>
+            <p className="text-2xl font-bold">
+              {pearlBalance ? formatEther(pearlBalance).slice(0, 8) : '0'} PEARL
+            </p>
+          </div>
+        </div>
 
-          setStatus(`Swap transaction submitted: ${hash}`);
-          
-          // Clear inputs on success
-          setTimeout(() => {
-            setEthAmountToSwap('');
-            refetchPearlBalance();
-          }, 2000);
+        {/* Exchange Rate */}
+        {exchangeRate && (
+          <div className="bg-gray-100 p-4 rounded-lg mb-8 text-center">
+            <p className="text-gray-700 font-semibold">
+              Exchange Rate: 1 ETH = {exchangeRate.toString()} PEARL
+            </p>
+          </div>
+        )}
 
-        } catch (error) {
-          console.error('Error swapping ETH to Pearl:', error);
-          setStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-      };
+        {/* Transaction Timing Display */}
+        {transactionTiming && (
+          <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-200 p-4 rounded-lg mb-8">
+            <div className="text-center">
+              <p className="font-semibold text-gray-700 mb-2">
+                {getSpeedEmoji(transactionTiming.type)} Transaction in Progress - {transactionTiming.type.toUpperCase()} Speed
+              </p>
+              {transactionTiming.endTime ? (
+                <p className="text-green-600 font-semibold">
+                  ✅ Completed in {((transactionTiming.endTime - transactionTiming.startTime) / 1000).toFixed(1)} seconds!
+                </p>
+              ) : (
+                <p className="text-blue-600">
+                  ⏱️ Running for {((Date.now() - transactionTiming.startTime) / 1000).toFixed(1)} seconds...
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
-      return (
-        <div className="max-w-4xl mx-auto p-6">
-          <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-8 rounded-lg mb-8">
-            <h1 className="text-4xl font-bold mb-4">💎 Pearl Wallet</h1>
-            <p className="text-xl">Manage your Pearl tokens and exchange with ETH</p>
+        {/* Exchange Section */}
+        <div className="grid md:grid-cols-2 gap-8 mb-8">
+          {/* ETH to Pearl */}
+          <div className="border border-gray-200 p-6 rounded-lg">
+            <h3 className="text-xl font-semibold mb-4">Exchange ETH for PEARL</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  ETH Amount
+                </label>
+                <input
+                  type="number"
+                  value={ethAmount}
+                  onChange={(e) => setEthAmount(e.target.value)}
+                  placeholder="0.1"
+                  step="0.001"
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div className="space-y-2">
+                <button
+                  onClick={handleEthToPearl}
+                  disabled={!ethAmount || isPending || isConfirming}
+                  className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isPending || isConfirming ? 'Processing...' : '🐢 Normal Exchange'}
+                </button>
+                <button
+                  onClick={handleFastEthToPearl}
+                  disabled={!ethAmount || isPending || isConfirming}
+                  className="w-full bg-gradient-to-r from-orange-500 to-red-600 text-white py-3 px-4 rounded-lg font-semibold hover:from-orange-600 hover:to-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  {isPending || isConfirming ? 'Processing Fast...' : '⚡ Fast Exchange'}
+                </button>
+                <button
+                  onClick={handleInstantEthToPearl}
+                  disabled={!ethAmount || isPending || isConfirming}
+                  className="w-full bg-gradient-to-r from-red-600 to-pink-600 text-white py-3 px-4 rounded-lg font-semibold hover:from-red-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  {isPending || isConfirming ? 'Processing Instantly...' : '🔥 Instant Exchange'}
+                </button>
+              </div>
+            </div>
           </div>
 
-          {!isConnected && (
-            <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-6">
-              <p className="font-bold">Connect Your Wallet</p>
-              <p>Please connect your wallet to manage your Pearl tokens.</p>
-            </div>
-          )}
-
-          {isConnected && (
-            <div className="grid md:grid-cols-2 gap-8">
-              {/* Balance Section */}
-              <div className="bg-white rounded-lg shadow-lg p-6">
-                <h2 className="text-2xl font-bold text-gray-800 mb-4">💰 Your Balance</h2>
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
-                    <span className="text-gray-600">Address:</span>
-                    <span className="font-mono text-sm">{address?.slice(0, 6)}...{address?.slice(-4)}</span>
-                  </div>
-                  <div className="flex justify-between items-center p-3 bg-blue-50 rounded">
-                    <span className="text-gray-600">Pearl Balance:</span>
-                    <span className="font-bold text-blue-600">{pearlBalance} PEARL</span>
-                  </div>
-                  <div className="flex justify-between items-center p-3 bg-green-50 rounded">
-                    <span className="text-gray-600">Exchange Rate:</span>
-                    <span className="font-bold text-green-600">1 ETH = {pearlPerEthRate} PEARL</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Exchange Section */}
-              <div className="bg-white rounded-lg shadow-lg p-6">
-                <h2 className="text-2xl font-bold text-gray-800 mb-4">🔄 Exchange</h2>
-                
-                {/* Pearl to ETH */}
-                <div className="mb-6">
-                  <h3 className="text-lg font-semibold text-gray-700 mb-3">Pearl → ETH</h3>
-                  <div className="space-y-3">
-                    <input
-                      type="number"
-                      placeholder="Pearl Amount"
-                      value={pearlAmountToSwap}
-                      onChange={(e) => setPearlAmountToSwap(e.target.value)}
-                      step="any"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    {pearlAmountToSwap && pearlPerEthRate > 0 && (
-                      <p className="text-sm text-gray-600">
-                        ≈ {(parseFloat(pearlAmountToSwap) / pearlPerEthRate).toFixed(6)} ETH
-                      </p>
-                    )}
-                    <button
-                      onClick={handlePearlToEthSwap}
-                      disabled={!isConnected || parseFloat(pearlAmountToSwap) <= 0}
-                      className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      Swap Pearl for ETH
-                    </button>
-                  </div>
-                </div>
-
-                {/* ETH to Pearl */}
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-700 mb-3">ETH → Pearl</h3>
-                  <div className="space-y-3">
-                    <input
-                      type="number"
-                      placeholder="ETH Amount"
-                      value={ethAmountToSwap}
-                      onChange={(e) => setEthAmountToSwap(e.target.value)}
-                      step="any"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    />
-                    {ethAmountToSwap && pearlPerEthRate > 0 && (
-                      <p className="text-sm text-gray-600">
-                        ≈ {(parseFloat(ethAmountToSwap) * pearlPerEthRate).toFixed(2)} PEARL
-                      </p>
-                    )}
-                    <button
-                      onClick={handleEthToPearlSwap}
-                      disabled={!isConnected || parseFloat(ethAmountToSwap) <= 0}
-                      className="w-full bg-purple-600 text-white py-2 px-4 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      Swap ETH for Pearl
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {status && (
-            <div className="mt-6 p-4 bg-blue-100 border border-blue-300 rounded-md">
-              <p className="text-blue-800">{status}</p>
-            </div>
-          )}
-
-          {/* Info Section */}
-          <div className="mt-8 bg-gray-50 rounded-lg p-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">ℹ️ How Pearl Exchange Works</h2>
-            <div className="grid md:grid-cols-2 gap-6">
+          {/* Pearl to ETH */}
+          <div className="border border-gray-200 p-6 rounded-lg">
+            <h3 className="text-xl font-semibold mb-4">Exchange PEARL for ETH</h3>
+            <div className="space-y-4">
               <div>
-                <h3 className="text-lg font-semibold text-gray-700 mb-2">🪙 Pearl Tokens</h3>
-                <p className="text-gray-600">
-                  Pearl (PEARL) is the native utility token of the Artifact.fun platform. 
-                  Use it to participate in meme contests, vote on submissions, and earn rewards.
-                </p>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  PEARL Amount
+                </label>
+                <input
+                  type="number"
+                  value={pearlAmount}
+                  onChange={(e) => setPearlAmount(e.target.value)}
+                  placeholder="100"
+                  step="1"
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
               </div>
-              <div>
-                <h3 className="text-lg font-semibold text-gray-700 mb-2">🔄 Exchange Rates</h3>
-                <p className="text-gray-600">
-                  Exchange rates are set by the contract owner and may change based on market conditions. 
-                  Always check the current rate before making a swap.
-                </p>
-              </div>
+              <button
+                onClick={handlePearlToEth}
+                disabled={!pearlAmount || isPending || isConfirming}
+                className="w-full bg-purple-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isPending || isConfirming ? 'Processing...' : 'Exchange PEARL → ETH'}
+              </button>
             </div>
           </div>
         </div>
-      );
-    };
 
-    export default PearlWallet;
-    
+        {/* Transfer Section */}
+        <div className="border border-gray-200 p-6 rounded-lg">
+          <h3 className="text-xl font-semibold mb-4">Transfer PEARL Tokens</h3>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Recipient Address
+              </label>
+              <input
+                type="text"
+                value={transferTo}
+                onChange={(e) => setTransferTo(e.target.value)}
+                placeholder="0x..."
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Amount (PEARL)
+              </label>
+              <input
+                type="number"
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+                placeholder="10"
+                step="1"
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+          <button
+            onClick={handleTransfer}
+            disabled={!transferTo || !transferAmount || isPending || isConfirming}
+            className="w-full mt-4 bg-green-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isPending || isConfirming ? 'Processing...' : 'Transfer PEARL'}
+          </button>
+        </div>
+
+        {/* Transaction Status */}
+        {isPending && (
+          <div className="mt-6 p-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded-lg">
+            <p>⏳ Transaction submitted. Waiting for confirmation...</p>
+          </div>
+        )}
+
+        {isConfirming && (
+          <div className="mt-6 p-4 bg-blue-100 border border-blue-400 text-blue-700 rounded-lg">
+            <p>🔄 Transaction confirming...</p>
+          </div>
+        )}
+
+        {isConfirmed && hash && (
+          <div className="mt-6 p-4 bg-green-100 border border-green-400 text-green-700 rounded-lg">
+            <p>✅ Transaction confirmed!</p>
+            <p className="text-sm break-all">Hash: {hash}</p>
+            <a 
+              href={`https://sepolia.explorer.zora.energy/tx/${hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 underline"
+            >
+              View on Zora Explorer →
+            </a>
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+            <p>❌ Error: {error.message}</p>
+          </div>
+        )}
+
+        {/* Wallet Info */}
+        <div className="mt-8 pt-6 border-t border-gray-200">
+          <p className="text-sm text-gray-600">
+            Connected Wallet: {address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'Not connected'}
+          </p>
+          {isZoraSepolia && (
+            <p className="text-sm text-purple-600 mt-1">
+              💜 Connected to Zora Sepolia Testnet
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default PearlWallet;

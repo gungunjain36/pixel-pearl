@@ -1,51 +1,41 @@
-    // frontend/src/utils/zora-config.ts
-import { type Chain } from 'viem';
+import { zoraSepolia } from 'viem/chains';
 
-    export const zoraSepolia: Chain = {
-      id: 999999999,
-      name: 'Zora Sepolia Testnet',
-      nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
-      rpcUrls: {
-        default: { http: ['https://sepolia.rpc.zora.energy'] },
-        public: { http: ['https://sepolia.rpc.zora.energy'] },
-      },
-      blockExplorers: {
-        default: {
-          name: 'Zora Sepolia Explorer',
-          url: 'https://sepolia.explorer.zora.energy/',
-        },
-      },
-      testnet: true,
-    };
+export const ZORA_CONFIG = {
+  chain: zoraSepolia,
+  rpcUrl: 'https://sepolia.rpc.zora.energy',
+  explorer: 'https://sepolia.explorer.zora.energy',
+  name: 'Zora Sepolia Testnet',
+  chainId: 999999999,
+  nativeCurrency: {
+    name: 'Ether',
+    symbol: 'ETH',
+    decimals: 18
+  }
+};
 
-    export const CONTRACT_ADDRESSES = {
-      pearlToken: process.env.REACT_APP_PEARL_TOKEN_ADDRESS || "0x0000000000000000000000000000000000000000",
-      memeContest: process.env.REACT_APP_MEME_CONTEST_ADDRESS || "0x0000000000000000000000000000000000000000",
-      pearlExchange: process.env.REACT_APP_PEARL_EXCHANGE_ADDRESS || "0x0000000000000000000000000000000000000000",
-      zoraMemeNFTCollection: process.env.REACT_APP_ZORA_MEME_NFT_COLLECTION_ADDRESS || "0x0000000000000000000000000000000000000000",
-    };
+export const CONTRACT_ADDRESSES = {
+  // Add deployed contract addresses here
+  PEARL_TOKEN: import.meta.env.VITE_PEARL_TOKEN_ADDRESS || '',
+  MYSTERY_BOX: import.meta.env.VITE_MYSTERY_BOX_ADDRESS || '',
+  MEME_CONTEST: import.meta.env.VITE_MEME_CONTEST_ADDRESS || '',
+  PEARL_EXCHANGE: import.meta.env.VITE_PEARL_EXCHANGE_ADDRESS || ''
+};
 
-    export const validateContractAddresses = () => {
-      const missingAddresses = [];
-      
-      if (CONTRACT_ADDRESSES.pearlToken === "0x0000000000000000000000000000000000000000") {
-        missingAddresses.push('REACT_APP_PEARL_TOKEN_ADDRESS');
-      }
-      if (CONTRACT_ADDRESSES.memeContest === "0x0000000000000000000000000000000000000000") {
-        missingAddresses.push('REACT_APP_MEME_CONTEST_ADDRESS');
-      }
-      if (CONTRACT_ADDRESSES.pearlExchange === "0x0000000000000000000000000000000000000000") {
-        missingAddresses.push('REACT_APP_PEARL_EXCHANGE_ADDRESS');
-      }
-      if (CONTRACT_ADDRESSES.zoraMemeNFTCollection === "0x0000000000000000000000000000000000000000") {
-        missingAddresses.push('REACT_APP_ZORA_MEME_NFT_COLLECTION_ADDRESS');
-      }
-      
-      if (missingAddresses.length > 0) {
-        console.warn('⚠️ Missing contract addresses in environment variables:', missingAddresses);
-        console.warn('Please set these environment variables after deploying contracts.');
-      }
-      
-      return missingAddresses.length === 0;
-    };
-    
+export const ZORA_API_ENDPOINTS = {
+  graphql: 'https://api.zora.co/graphql',
+  collection: 'https://api.zora.co/collections',
+  token: 'https://api.zora.co/tokens'
+};
+
+export const STORY_PROTOCOL_CONFIG = {
+  chainId: 'iliad',
+  rpcUrl: 'https://testnet.storyrpc.io',
+  explorer: 'https://testnet.story.foundation',
+  spgNftContract: import.meta.env.VITE_SPG_NFT_CONTRACT || ''
+};
+
+export const PINATA_CONFIG = {
+  jwt: import.meta.env.VITE_PINATA_JWT || '',
+  gateway: import.meta.env.VITE_PINATA_GATEWAY || 'https://gateway.pinata.cloud',
+  apiUrl: 'https://api.pinata.cloud'
+};
