@@ -1,7 +1,7 @@
-import { useAccount, useWriteContract, useReadContract, useWaitForTransactionReceipt, useEstimateGas, useGasPrice, useFeeData, useChainId } from 'wagmi';
-import { parseEther, formatEther, parseGwei } from 'viem';
+import { useAccount, useWriteContract, useReadContract, useWaitForTransactionReceipt, useGasPrice, useFeeData, useChainId } from 'wagmi';
+import { parseEther, formatEther } from 'viem';
 import { zoraSepolia } from 'viem/chains';
-import { CONTRACT_ADDRESSES } from '../utils/zora-config';
+import { CONTRACT_ADDRESSES, validateContractAddresses } from '../utils/zora-config';
 
 // Import ABIs
 import PearlTokenABI from '../abi/PearlToken.json';
@@ -23,6 +23,25 @@ export const useContracts = () => {
 
   // Check if we're on Zora Sepolia
   const isZoraSepolia = chainId === zoraSepolia.id;
+
+  // Validate contract addresses on hook initialization
+  const validateAndLogContracts = () => {
+    console.log('🔍 useContracts Hook Debug:');
+    console.log('Chain ID:', chainId);
+    console.log('Is Zora Sepolia:', isZoraSepolia);
+    console.log('Contract Addresses:', CONTRACT_ADDRESSES);
+    
+    const isValid = validateContractAddresses();
+    if (!isValid) {
+      console.error('⚠️ Contract addresses not configured properly. Please check your .env file.');
+    }
+    return isValid;
+  };
+
+  // Validate contracts on mount (only in development)
+  if (import.meta.env.DEV) {
+    validateAndLogContracts();
+  }
 
   // Calculate optimized gas fees for different speed levels
   const getGasFees = (speedMultiplier: number = 1.2) => {
@@ -233,23 +252,46 @@ export const useContracts = () => {
   // Pearl Exchange Contract Functions - ZORA SEPOLIA OPTIMIZED
   const exchangeEthForPearl = async (ethAmount: string) => {
     try {
+      // Validate contract address first
+      if (!CONTRACT_ADDRESSES.PEARL_EXCHANGE) {
+        throw new Error('PEARL_EXCHANGE contract address not configured. Please set VITE_PEARL_EXCHANGE_ADDRESS in your .env file.');
+      }
+
+      // Validate network
+      if (!isZoraSepolia) {
+        throw new Error('Please switch to Zora Sepolia network to use PEARL exchange');
+      }
+
+      // Validate amount
+      if (!ethAmount || parseFloat(ethAmount) <= 0) {
+        throw new Error('Please enter a valid ETH amount');
+      }
+
       const gasLimit = getGasLimit(120000n);
       const gasFees = getGasFees(isZoraSepolia ? 2.0 : 1.5); // Higher multiplier for Zora
 
       console.log(`🚀 Starting ${isZoraSepolia ? 'Zora Sepolia' : 'Ethereum'} optimized ETH to PEARL exchange...`);
+      console.log('Exchange Contract Address:', CONTRACT_ADDRESSES.PEARL_EXCHANGE);
+      console.log('ETH Amount:', ethAmount);
       console.log('Network Chain ID:', chainId);
       console.log('Gas settings:', { gasLimit, ...gasFees });
+      console.log('writeContract function available:', typeof writeContract);
 
-      await writeContract({
+      const txParams = {
         address: CONTRACT_ADDRESSES.PEARL_EXCHANGE as `0x${string}`,
         abi: PearlExchangeABI,
         functionName: 'exchangeEthForPearl',
         value: parseEther(ethAmount),
         gas: gasLimit,
         ...gasFees,
-      });
+      };
+
+      console.log('📋 Transaction parameters:', txParams);
+      console.log('🔄 Calling writeContract...');
+
+      await writeContract(txParams);
     } catch (error) {
-      console.error('Error exchanging ETH for Pearl:', error);
+      console.error('❌ Error exchanging ETH for Pearl:', error);
       throw error;
     }
   };
@@ -271,54 +313,6 @@ export const useContracts = () => {
       });
     } catch (error) {
       console.error('Error exchanging Pearl for ETH:', error);
-      throw error;
-    }
-  };
-
-  // FAST exchange optimized for Zora Sepolia
-  const fastExchangeEthForPearl = async (ethAmount: string) => {
-    try {
-      const gasLimit = getGasLimit(120000n);
-      const gasFees = getGasFees(isZoraSepolia ? 3.0 : 2.5); // Higher for Zora's 2s blocks
-
-      console.log('⚡ FAST exchange mode activated!');
-      console.log(`Network: ${isZoraSepolia ? 'Zora Sepolia (2s blocks)' : 'Ethereum'}`);
-      console.log('Gas settings:', { gasLimit, ...gasFees });
-
-      await writeContract({
-        address: CONTRACT_ADDRESSES.PEARL_EXCHANGE as `0x${string}`,
-        abi: PearlExchangeABI,
-        functionName: 'exchangeEthForPearl',
-        value: parseEther(ethAmount),
-        gas: gasLimit,
-        ...gasFees,
-      });
-    } catch (error) {
-      console.error('Error in fast exchange:', error);
-      throw error;
-    }
-  };
-
-  // INSTANT exchange - optimized for Zora's fast blocks
-  const instantExchangeEthForPearl = async (ethAmount: string) => {
-    try {
-      const gasLimit = getGasLimit(120000n);
-      const gasFees = getGasFees(isZoraSepolia ? 4.0 : 4.0); // High priority for instant
-
-      console.log('🔥 INSTANT exchange mode activated!');
-      console.log(`Network: ${isZoraSepolia ? 'Zora Sepolia (2s blocks)' : 'Ethereum'}`);
-      console.log('Gas settings:', { gasLimit, ...gasFees });
-
-      await writeContract({
-        address: CONTRACT_ADDRESSES.PEARL_EXCHANGE as `0x${string}`,
-        abi: PearlExchangeABI,
-        functionName: 'exchangeEthForPearl',
-        value: parseEther(ethAmount),
-        gas: gasLimit,
-        ...gasFees,
-      });
-    } catch (error) {
-      console.error('Error in instant exchange:', error);
       throw error;
     }
   };
@@ -361,8 +355,6 @@ export const useContracts = () => {
     // Pearl Exchange functions (Zora-optimized)
     exchangeEthForPearl,
     exchangePearlForEth,
-    fastExchangeEthForPearl,
-    instantExchangeEthForPearl,
     getExchangeRate,
 
     // Utility functions

@@ -1,22 +1,28 @@
 import { createPublicClient, http, createWalletClient, custom } from 'viem';
-import { zoraSepolia } from 'viem/chains';
+import { base } from 'viem/chains';
 import { createCreatorClient } from '@zoralabs/protocol-sdk';
 
-// Configure Zora Sepolia client
+// Configure Base client for production use
 const publicClient = createPublicClient({
-  chain: zoraSepolia,
+  chain: base,
   transport: http()
 });
 
-const walletClient = createWalletClient({
-  chain: zoraSepolia,
-  transport: custom(window.ethereum)
-});
+let walletClient: any = null;
+let creatorClient: any = null;
 
-const creatorClient = createCreatorClient({ 
-  chainId: zoraSepolia.id, 
-  publicClient 
-});
+// Initialize clients when wallet is available
+export const initializeZoraClients = (walletProvider: any) => {
+  walletClient = createWalletClient({
+    chain: base,
+    transport: custom(walletProvider)
+  });
+
+  creatorClient = createCreatorClient({ 
+    chainId: base.id, 
+    publicClient 
+  });
+};
 
 interface MintNFTParams {
   contractAddress: string;
@@ -35,6 +41,10 @@ interface CreateCoinParams {
 
 export const mintNFT = async (params: MintNFTParams) => {
   try {
+    if (!creatorClient || !walletClient) {
+      throw new Error('Zora clients not initialized. Please connect wallet first.');
+    }
+
     console.log('Minting NFT on Zora:', params);
 
     const { request } = await creatorClient.mint({
@@ -62,6 +72,10 @@ export const mintNFT = async (params: MintNFTParams) => {
 
 export const createCoinV4 = async (params: CreateCoinParams) => {
   try {
+    if (!creatorClient || !walletClient) {
+      throw new Error('Zora clients not initialized. Please connect wallet first.');
+    }
+
     console.log('Creating CoinV4 token on Zora:', params);
 
     // Use Zora's Coins SDK to create a new CoinV4 token
@@ -153,6 +167,10 @@ export const createZoraDrop = async (params: {
   creatorAddress: string;
 }) => {
   try {
+    if (!creatorClient || !walletClient) {
+      throw new Error('Zora clients not initialized. Please connect wallet first.');
+    }
+
     console.log('Creating Zora Drop collection:', params);
 
     const { request } = await creatorClient.createContract({

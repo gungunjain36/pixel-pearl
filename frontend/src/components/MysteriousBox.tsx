@@ -3,9 +3,9 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagm
 import { ethers } from 'ethers';
 import MysteryBoxABI from '../abi/MysteryBox.json';
 import { registerIP } from '../services/storyProtocol';
-import { uploadFileToIPFS } from '../services/ipfs';
+import ipfsService from '../services/ipfs';
 
-const MYSTERY_BOX_ADDRESS = import.meta.env.REACT_APP_MYSTERY_BOX_ADDRESS;
+const MYSTERY_BOX_ADDRESS = import.meta.env.VITE_MYSTERY_BOX_ADDRESS;
 
 interface ContentFile {
   file: File;
@@ -64,8 +64,7 @@ function MysteriousBox() {
 
       // 1. Upload content to IPFS
       console.log('Uploading content to IPFS...');
-      const contentUploadResult = await uploadFileToIPFS(contentFile.file);
-      const ipfsHash = contentUploadResult.IpfsHash;
+                      const ipfsHash = await ipfsService.uploadFile(contentFile.file);
 
       // 2. Create metadata object
       const metadata = {
@@ -90,10 +89,7 @@ function MysteriousBox() {
 
       // 3. Upload metadata to IPFS
       console.log('Uploading metadata to IPFS...');
-      const metadataBlob = new Blob([JSON.stringify(metadata)], { type: 'application/json' });
-      const metadataFile = new File([metadataBlob], 'metadata.json');
-      const metadataUploadResult = await uploadFileToIPFS(metadataFile);
-      const metadataHash = metadataUploadResult.IpfsHash;
+              const metadataHash = await ipfsService.uploadJSON(metadata);
 
       // 4. Register IP with Story Protocol
       console.log('Registering IP with Story Protocol...');

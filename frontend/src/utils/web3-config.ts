@@ -9,11 +9,19 @@ export const config = createConfig({
   connectors: [
     injected(),
     metaMask(),
-    walletConnect({ projectId }),
+    walletConnect({ 
+      projectId,
+      metadata: {
+        name: 'Creso - Web3 Meme Platform',
+        description: 'Create, share, and trade memes as NFTs',
+        url: 'https://localhost:5175',
+        icons: ['https://localhost:5175/vite.svg']
+      }
+    }),
   ],
   transports: {
     [mainnet.id]: http(),
-    [sepolia.id]: http(),
+    [sepolia.id]: http('https://rpc.sepolia.org'),
     [zoraSepolia.id]: http('https://sepolia.rpc.zora.energy'),
   },
 });
