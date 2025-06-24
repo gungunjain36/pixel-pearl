@@ -37,7 +37,7 @@ const Home: React.FC = () => {
       <div className="relative max-w-7xl mx-auto px-6 py-20">
         <div className="text-center">
           <h1 className="text-6xl font-bold mb-6 font-['Space_Grotesk']" style={{ color: 'var(--text-primary)' }}>
-            Welcome to <span className="text-gradient">Creso</span>
+            Welcome to <span className="text-gradient">Pixel Pearl</span>
           </h1>
           <p className="text-2xl mb-12 max-w-4xl mx-auto font-['Inter']" style={{ color: 'var(--text-secondary)' }}>
             The Next-Generation Web3 Dashboard. Discover, create, and trade digital assets with cutting-edge technology.
@@ -207,7 +207,7 @@ function App() {
               <div className="max-w-7xl mx-auto px-6">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
                   <div>
-                    <h3 className="text-xl font-bold mb-4 text-gradient font-['Space_Grotesk']">Creso</h3>
+                    <h3 className="text-xl font-bold mb-4 text-gradient font-['Space_Grotesk']">Pixel Pearl</h3>
                     <p style={{ color: 'var(--text-secondary)' }} className="font-['Inter']">
                       The Next-Generation Web3 Dashboard transforming digital culture into valuable assets.
                     </p>
@@ -241,7 +241,7 @@ function App() {
                   </div>
                 </div>
                 <div className="border-t pt-8 mt-8 text-center" style={{ borderColor: 'rgba(255, 255, 255, 0.1)', color: 'var(--text-muted)' }}>
-                  <p className="font-['Inter']">© 2024 Creso. All rights reserved. Built with ❤️ for the Web3 community.</p>
+                  <p className="font-['Inter']">© 2024 Pixel Pearl. All rights reserved. Built with ❤️ for the Web3 community.</p>
                 </div>
               </div>
             </footer>

@@ -1,4 +1,5 @@
-import { parseEther, formatEther, encodeFunctionData, getContract, type WalletClient } from 'viem';
+import { parseEther, formatEther, type WalletClient } from 'viem';
+import { zoraSepolia } from 'viem/chains';
 import { ipfsService } from './ipfs';
 import { storyProtocolService } from './storyProtocol';
 
@@ -263,10 +264,11 @@ export class MemeNFTService {
       const collectionMetadataHash = await ipfsService.uploadJSON(collectionMetadata);
       
       // Create contract via Zora Factory
-      const hash = await walletClient.writeContract({
+      await walletClient.writeContract({
         address: this.zoraContracts.factoryProxy as `0x${string}`,
         abi: ZORA_FACTORY_ABI,
         functionName: 'createContract',
+        chain: zoraSepolia,
         args: [
           "Creso Meme Collection",
           `ipfs://${collectionMetadataHash}`,
@@ -307,6 +309,7 @@ export class MemeNFTService {
           address: collectionAddress as `0x${string}`,
           abi: ZORA_1155_ABI,
           functionName: 'setupNewToken',
+          chain: zoraSepolia,
           args: [
             tokenURI,
             BigInt(1000), // Max supply
@@ -331,6 +334,7 @@ export class MemeNFTService {
         address: collectionAddress as `0x${string}`,
         abi: ZORA_1155_ABI,
         functionName: 'mint',
+        chain: zoraSepolia,
         args: [
           this.zoraContracts.fixedPriceSaleStrategy as `0x${string}`, // Minter (sale strategy)
           BigInt(1), // Token ID (using 1 for simplicity)

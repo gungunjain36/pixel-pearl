@@ -48,7 +48,7 @@
                       <div className="absolute inset-0 rounded-2xl" style={{ boxShadow: 'var(--shadow-glow)' }}></div>
                     </div>
                     <div className="hidden sm:block">
-                      <span className="text-2xl font-bold text-gradient font-['Space_Grotesk']">Creso</span>
+                      <span className="text-2xl font-bold text-gradient font-['Space_Grotesk']">Pixel Pearl</span>
                       <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>Web3 Dashboard</div>
                     </div>
                   </Link>

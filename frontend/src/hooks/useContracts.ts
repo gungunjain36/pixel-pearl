@@ -147,8 +147,33 @@ export const useContracts = () => {
     mintPrice: string
   ) => {
     try {
-      const gasLimit = getGasLimit(200000n);
-      const gasFees = getGasFees(1.1);
+      // Validate contract address
+      if (!CONTRACT_ADDRESSES.MYSTERY_BOX) {
+        throw new Error('Mystery Box contract address not configured. Please set VITE_MYSTERY_BOX_ADDRESS in your .env file.');
+      }
+
+      // Validate network
+      if (!isZoraSepolia) {
+        throw new Error('Please switch to Zora Sepolia network to create mystery boxes');
+      }
+
+      // Validate inputs
+      if (!contentType || !ipfsHash || !mintPrice) {
+        throw new Error('All fields are required to create a mystery box');
+      }
+
+      if (parseFloat(mintPrice) <= 0) {
+        throw new Error('Mint price must be greater than 0');
+      }
+
+      const gasLimit = getGasLimit(300000n);
+      const gasFees = getGasFees(isZoraSepolia ? 2.0 : 1.5);
+
+      console.log('🎭 Creating mystery box...');
+      console.log('Content Type:', contentType);
+      console.log('IPFS Hash:', ipfsHash);
+      console.log('Story Protocol IP ID:', storyProtocolIPId);
+      console.log('Mint Price (PEARL):', mintPrice);
 
       await writeContract({
         address: CONTRACT_ADDRESSES.MYSTERY_BOX as `0x${string}`,
@@ -159,15 +184,27 @@ export const useContracts = () => {
         ...gasFees,
       });
     } catch (error) {
-      console.error('Error creating mystery box:', error);
+      console.error('❌ Error creating mystery box:', error);
       throw error;
     }
   };
 
   const purchaseMysteryBox = async (tokenId: number) => {
     try {
-      const gasLimit = getGasLimit(150000n);
-      const gasFees = getGasFees(1.1);
+      // Validate contract address
+      if (!CONTRACT_ADDRESSES.MYSTERY_BOX) {
+        throw new Error('Mystery Box contract address not configured');
+      }
+
+      // Validate network
+      if (!isZoraSepolia) {
+        throw new Error('Please switch to Zora Sepolia network to purchase mystery boxes');
+      }
+
+      const gasLimit = getGasLimit(200000n);
+      const gasFees = getGasFees(isZoraSepolia ? 2.0 : 1.5);
+
+      console.log('🛒 Purchasing mystery box #', tokenId);
 
       await writeContract({
         address: CONTRACT_ADDRESSES.MYSTERY_BOX as `0x${string}`,
@@ -178,15 +215,27 @@ export const useContracts = () => {
         ...gasFees,
       });
     } catch (error) {
-      console.error('Error purchasing mystery box:', error);
+      console.error('❌ Error purchasing mystery box:', error);
       throw error;
     }
   };
 
   const convertToCoinV4 = async (tokenId: number) => {
     try {
-      const gasLimit = getGasLimit(120000n);
-      const gasFees = getGasFees(1.1);
+      // Validate contract address
+      if (!CONTRACT_ADDRESSES.MYSTERY_BOX) {
+        throw new Error('Mystery Box contract address not configured');
+      }
+
+      // Validate network
+      if (!isZoraSepolia) {
+        throw new Error('Please switch to Zora Sepolia network to convert to CoinV4');
+      }
+
+      const gasLimit = getGasLimit(250000n);
+      const gasFees = getGasFees(isZoraSepolia ? 2.0 : 1.5);
+
+      console.log('🪙 Converting mystery box # to CoinV4...', tokenId);
 
       await writeContract({
         address: CONTRACT_ADDRESSES.MYSTERY_BOX as `0x${string}`,
@@ -197,7 +246,104 @@ export const useContracts = () => {
         ...gasFees,
       });
     } catch (error) {
-      console.error('Error converting to CoinV4:', error);
+      console.error('❌ Error converting to CoinV4:', error);
+      throw error;
+    }
+  };
+
+  // Mystery Box Read Functions
+  const getMysteryBox = (tokenId: number) => {
+    return useReadContract({
+      address: CONTRACT_ADDRESSES.MYSTERY_BOX as `0x${string}`,
+      abi: MysteryBoxABI,
+      functionName: 'getMysteryBox',
+      args: [tokenId],
+      query: {
+        enabled: !!CONTRACT_ADDRESSES.MYSTERY_BOX && tokenId >= 0
+      }
+    });
+  };
+
+  const getCreatorBoxes = (creatorAddress: string) => {
+    return useReadContract({
+      address: CONTRACT_ADDRESSES.MYSTERY_BOX as `0x${string}`,
+      abi: MysteryBoxABI,
+      functionName: 'getCreatorBoxes',
+      args: [creatorAddress],
+      query: {
+        enabled: !!CONTRACT_ADDRESSES.MYSTERY_BOX && !!creatorAddress
+      }
+    });
+  };
+
+  const getMysteryBoxOwner = (tokenId: number) => {
+    return useReadContract({
+      address: CONTRACT_ADDRESSES.MYSTERY_BOX as `0x${string}`,
+      abi: MysteryBoxABI,
+      functionName: 'ownerOf',
+      args: [tokenId],
+      query: {
+        enabled: !!CONTRACT_ADDRESSES.MYSTERY_BOX && tokenId >= 0
+      }
+    });
+  };
+
+  const getMysteryBoxTokenURI = (tokenId: number) => {
+    return useReadContract({
+      address: CONTRACT_ADDRESSES.MYSTERY_BOX as `0x${string}`,
+      abi: MysteryBoxABI,
+      functionName: 'tokenURI',
+      args: [tokenId],
+      query: {
+        enabled: !!CONTRACT_ADDRESSES.MYSTERY_BOX && tokenId >= 0
+      }
+    });
+  };
+
+  // New function to fetch mystery box data directly
+  const fetchMysteryBoxData = async (tokenId: number) => {
+    if (!CONTRACT_ADDRESSES.MYSTERY_BOX) {
+      throw new Error('Mystery Box contract address not configured');
+    }
+
+    try {
+      // We'll use viem/ethers to call the contract directly for more control
+      const { createPublicClient, http } = await import('viem');
+      const { zoraSepolia } = await import('viem/chains');
+      
+      const client = createPublicClient({
+        chain: zoraSepolia,
+        transport: http()
+      });
+
+      // Get mystery box data
+      const boxData = await client.readContract({
+        address: CONTRACT_ADDRESSES.MYSTERY_BOX as `0x${string}`,
+        abi: MysteryBoxABI,
+        functionName: 'getMysteryBox',
+        args: [tokenId],
+      });
+
+      // Get owner
+      let owner;
+      try {
+        owner = await client.readContract({
+          address: CONTRACT_ADDRESSES.MYSTERY_BOX as `0x${string}`,
+          abi: MysteryBoxABI,
+          functionName: 'ownerOf',
+          args: [tokenId],
+        });
+      } catch (error) {
+        // Token might not exist or not have an owner
+        owner = boxData.creator;
+      }
+
+      return {
+        boxData,
+        owner
+      };
+    } catch (error) {
+      console.error(`Error fetching mystery box ${tokenId}:`, error);
       throw error;
     }
   };
@@ -346,6 +492,11 @@ export const useContracts = () => {
     createMysteryBox,
     purchaseMysteryBox,
     convertToCoinV4,
+    getMysteryBox,
+    getCreatorBoxes,
+    getMysteryBoxOwner,
+    getMysteryBoxTokenURI,
+    fetchMysteryBoxData,
 
     // Meme Contest functions
     submitMeme,
